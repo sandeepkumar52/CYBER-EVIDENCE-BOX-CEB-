@@ -1,152 +1,124 @@
-from fastapi import Depends, FastAPI, HTTPException
+from contextlib import asynccontextmanager
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
-from . import models
-from .database import Base, engine, get_db
-from .schemas import (
-    CaseCreate,
-    CaseResponse,
-    UserCreate,
-    UserResponse,
-)
+from .config import CORS_ORIGINS
+from .database import Base, engine, SessionLocal
+from .models import User
+from .routers import audit, auth, cases, custody, dashboard, evidence, users
+from .security.auth import hash_password, verify_password
 
-Base.metadata.create_all(bind=engine)
+
+def init_db():
+    Base.metadata.create_all(bind=engine)
+
+    # Schema migration check for SQLite dev environment
+    try:
+        inspector = inspect(engine)
+        if "users" in inspector.get_table_names():
+            columns = [col["name"] for col in inspector.get_columns("users")]
+            if "hashed_password" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE users ADD COLUMN hashed_password VARCHAR(255)"))
+                    print("[CEB] Migrated table 'users': added 'hashed_password' column.")
+
+        if "cases" in inspector.get_table_names():
+            case_columns = [col["name"] for col in inspector.get_columns("cases")]
+            if "is_archived" not in case_columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE cases ADD COLUMN is_archived BOOLEAN DEFAULT 0"))
+                    print("[CEB] Migrated table 'cases': added 'is_archived' column.")
+
+        if "evidence" in inspector.get_table_names():
+            ev_columns = [col["name"] for col in inspector.get_columns("evidence")]
+            if "file_size_bytes" not in ev_columns:
+                with engine.begin() as conn:
+                    conn.execute(text("ALTER TABLE evidence ADD COLUMN file_size_bytes INTEGER"))
+                    print("[CEB] Migrated table 'evidence': added 'file_size_bytes' column.")
+
+        # Create/ensure initial seed users with valid hashed passwords
+        db: Session = SessionLocal()
+        try:
+            admin_user = db.query(User).filter(User.username == "admin").first()
+            if not admin_user:
+                admin_user = User(
+                    username="admin",
+                    role="Admin",
+                    hashed_password=hash_password("admin123"),
+                )
+                db.add(admin_user)
+            elif not verify_password("admin123", admin_user.hashed_password):
+                admin_user.hashed_password = hash_password("admin123")
+
+            inv_user = db.query(User).filter(User.username == "investigator01").first()
+            if not inv_user:
+                inv_user = User(
+                    username="investigator01",
+                    role="Investigator",
+                    hashed_password=hash_password("investigator123"),
+                )
+                db.add(inv_user)
+            elif not verify_password("investigator123", inv_user.hashed_password):
+                inv_user.hashed_password = hash_password("investigator123")
+
+            db.commit()
+        finally:
+            db.close()
+    except Exception as e:
+        print(f"[CEB] DB Init Note: {e}")
+
+
+# Run initialization on import
+init_db()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    init_db()
+    yield
 
 
 app = FastAPI(
-    title="Cyber Evidence Box API",
-    description="Backend API for the Cyber Evidence Box forensic platform",
-    version="0.1.0",
+    title="Cyber Evidence Box (CEB) API",
+    description="Digital Forensic Evidence Management Platform Backend API",
+    version="0.2.0",
+    lifespan=lifespan,
 )
-
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-    ],
+    allow_origins=CORS_ORIGINS if CORS_ORIGINS != ["*"] else ["*"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# Register API Routers
+app.include_router(auth.router)
+app.include_router(users.router)
+app.include_router(cases.router)
+app.include_router(evidence.router)
+app.include_router(custody.router)
+app.include_router(audit.router)
+app.include_router(dashboard.router)
 
-@app.get("/")
+
+@app.get("/", tags=["System"])
 def root():
     return {
-        "message": "Cyber Evidence Box API",
+        "message": "Cyber Evidence Box (CEB) API",
         "status": "online",
-        "version": "0.1.0",
+        "version": "0.2.0",
+        "docs": "/docs",
     }
 
 
-@app.get("/health")
+@app.get("/health", tags=["System"])
 def health_check():
     return {
         "status": "healthy",
+        "system": "Cyber Evidence Box",
     }
-
-
-@app.post("/cases", response_model=CaseResponse)
-def create_case(
-    case: CaseCreate,
-    db: Session = Depends(get_db),
-):
-    existing_case = (
-        db.query(models.Case)
-        .filter(models.Case.case_id == case.case_id)
-        .first()
-    )
-
-    if existing_case:
-        raise HTTPException(
-            status_code=400,
-            detail="Case ID already exists",
-        )
-
-    new_case = models.Case(
-        case_id=case.case_id,
-        case_name=case.case_name,
-        description=case.description,
-        status=case.status,
-        created_by=case.created_by,
-    )
-
-    db.add(new_case)
-    db.commit()
-    db.refresh(new_case)
-
-    return new_case
-
-
-@app.get("/cases", response_model=list[CaseResponse])
-def get_cases(
-    db: Session = Depends(get_db),
-):
-    cases = (
-        db.query(models.Case)
-        .order_by(models.Case.created_at.desc())
-        .all()
-    )
-
-    return cases
-
-
-@app.get("/cases/{case_id}", response_model=CaseResponse)
-def get_case(
-    case_id: str,
-    db: Session = Depends(get_db),
-):
-    case = (
-        db.query(models.Case)
-        .filter(models.Case.case_id == case_id)
-        .first()
-    )
-
-    if not case:
-        raise HTTPException(
-            status_code=404,
-            detail="Case not found",
-        )
-
-    return case
-
-@app.post("/users", response_model=UserResponse)
-def create_user(
-    user: UserCreate,
-    db: Session = Depends(get_db),
-):
-    existing_user = (
-        db.query(models.User)
-        .filter(models.User.username == user.username)
-        .first()
-    )
-
-    if existing_user:
-        raise HTTPException(
-            status_code=400,
-            detail="Username already exists",
-        )
-
-    new_user = models.User(
-        username=user.username,
-        role=user.role,
-    )
-
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-
-    return new_user
-
-
-@app.get("/users", response_model=list[UserResponse])
-def get_users(
-    db: Session = Depends(get_db),
-):
-    return (
-        db.query(models.User)
-        .order_by(models.User.created_at.desc())
-        .all()
-    )

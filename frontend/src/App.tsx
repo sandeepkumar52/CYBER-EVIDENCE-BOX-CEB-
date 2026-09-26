@@ -1,133 +1,100 @@
+import React, { useEffect, useState } from "react";
 import {
   Activity,
-  Archive,
-  ArrowUpRight,
-  BadgeCheck,
-  Bell,
-  
-  Camera,
-  ChevronRight,
-  CircleCheck,
-  Clock3,
   Database,
-  FileSearch,
-  Fingerprint,
   FolderOpen,
-  HardDrive,
-  Hash,
   LayoutDashboard,
-  LockKeyhole,
+  LogOut,
   Menu,
-  
   PackageSearch,
-  Radio,
-  Search,
-  Settings,
   ShieldCheck,
-  ShieldEllipsis,
-  Usb,
   Users,
   X,
 } from "lucide-react";
 
-import { useEffect, useState } from "react";
+import { AuthProvider, useAuth } from "./context/AuthContext";
 import api from "./services/api";
+import type { Case, Evidence } from "./types";
+
+import { CreateCaseModal } from "./components/CreateCaseModal";
+import { RegisterEvidenceModal } from "./components/RegisterEvidenceModal";
+import { UploadEvidenceModal } from "./components/UploadEvidenceModal";
+import { AddCustodyModal } from "./components/AddCustodyModal";
+import { LoginPage } from "./components/LoginPage";
+
+import { DashboardPage } from "./pages/DashboardPage";
+import { CasesPage } from "./pages/CasesPage";
+import { CaseDetailsPage } from "./pages/CaseDetailsPage";
+import { EvidencePage } from "./pages/EvidencePage";
+import { CustodyPage } from "./pages/CustodyPage";
+import { AuditLogsPage } from "./pages/AuditLogsPage";
+import { UsersPage } from "./pages/UsersPage";
+
 import "./App.css";
 
+const MainApp: React.FC = () => {
+  const { user, logout, isAuthenticated, loading } = useAuth();
+  const [activePage, setActivePage] = useState<string>("dashboard");
+  const [activeParam, setActiveParam] = useState<string | undefined>(undefined);
+  const [sidebarOpen, setSidebarOpen] = useState<boolean>(false);
+  const [backendStatus, setBackendStatus] = useState<string>("Checking...");
+  const [casesList, setCasesList] = useState<Case[]>([]);
 
+  // Modals state
+  const [isCreateCaseOpen, setIsCreateCaseOpen] = useState(false);
+  const [isRegisterEvidenceOpen, setIsRegisterEvidenceOpen] = useState(false);
+  const [registerCaseId, setRegisterCaseId] = useState<number | undefined>(undefined);
+  const [uploadEvidenceItem, setUploadEvidenceItem] = useState<Evidence | null>(null);
+  const [custodyEvidenceItem, setCustodyEvidenceItem] = useState<Evidence | null>(null);
 
-
-function App() {
-  const [backendStatus, setBackendStatus] = useState("Checking...");
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   useEffect(() => {
-  api
-    .get("/health")
-    .then((response) => {
-      setBackendStatus(response.data.status);
-    })
-    .catch(() => {
-      setBackendStatus("Offline");
-    });
-}, []);
+    api
+      .get("/health")
+      .then((res) => setBackendStatus(res.data.status))
+      .catch(() => setBackendStatus("Offline"));
+  }, []);
 
-type CaseStatus = "Active" | "Review" | "Closed";
+  const loadAllCases = async () => {
+    try {
+      const response = await api.get<Case[]>("/cases?limit=100");
+      setCasesList(response.data);
+    } catch {
+      // Ignored if unauthenticated
+    }
+  };
 
-interface CaseItem {
-  id: string;
-  title: string;
-  investigator: string;
-  evidence: number;
-  status: CaseStatus;
-  updated: string;
-}
+  useEffect(() => {
+    if (isAuthenticated) {
+      loadAllCases();
+    }
+  }, [isAuthenticated]);
 
-interface EvidenceItem {
-  id: string;
-  name: string;
-  type: string;
-  size: string;
-  hash: string;
-  status: "Verified" | "Processing";
-}
+  if (loading) {
+    return (
+      <div className="login-container">
+        <div style={{ color: "#70a7ff", fontSize: "14px" }}>Loading Cyber Evidence Box...</div>
+      </div>
+    );
+  }
 
-const cases: CaseItem[] = [
-  {
-    id: "CASE-2026-001",
-    title: "Unauthorized System Access",
-    investigator: "S. Kumar",
-    evidence: 8,
-    status: "Active",
-    updated: "12 min ago",
-  },
-  {
-    id: "CASE-2026-002",
-    title: "USB Data Exfiltration",
-    investigator: "A. Sharma",
-    evidence: 5,
-    status: "Review",
-    updated: "1 hr ago",
-  },
-  {
-    id: "CASE-2026-003",
-    title: "Endpoint Investigation",
-    investigator: "R. Patel",
-    evidence: 12,
-    status: "Active",
-    updated: "3 hrs ago",
-  },
-];
+  if (!isAuthenticated) {
+    return <LoginPage />;
+  }
 
-const evidence: EvidenceItem[] = [
-  {
-    id: "EVID-001",
-    name: "suspect_drive.E01",
-    type: "Disk Image",
-    size: "128.4 GB",
-    hash: "9b3a...71fc",
-    status: "Verified",
-  },
-  {
-    id: "EVID-002",
-    name: "usb_capture.dd",
-    type: "USB Image",
-    size: "31.8 GB",
-    hash: "42ef...a921",
-    status: "Verified",
-  },
-  {
-    id: "EVID-003",
-    name: "system_logs.zip",
-    type: "Archive",
-    size: "842 MB",
-    hash: "c71d...88ab",
-    status: "Processing",
-  },
-];
+  const navigateTo = (page: string, param?: string) => {
+    setActivePage(page);
+    setActiveParam(param);
+    setSidebarOpen(false);
+  };
 
+  const handleOpenRegisterEvidence = (cId?: number) => {
+    setRegisterCaseId(cId);
+    setIsRegisterEvidenceOpen(true);
+  };
 
   return (
     <div className="app-shell">
+      {/* SIDEBAR */}
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand">
           <div className="brand-icon">
@@ -138,14 +105,8 @@ const evidence: EvidenceItem[] = [
             <h1>CEB</h1>
             <span>Cyber Evidence Box</span>
           </div>
-          <div>
-            Backend: {backendStatus}
-          </div>
 
-          <button
-            className="mobile-close"
-            onClick={() => setSidebarOpen(false)}
-          >
+          <button className="mobile-close" onClick={() => setSidebarOpen(false)}>
             <X size={20} />
           </button>
         </div>
@@ -153,468 +114,204 @@ const evidence: EvidenceItem[] = [
         <div className="system-status">
           <span className="status-dot" />
           <div>
-            <strong>System Online</strong>
+            <strong>System {backendStatus === "healthy" ? "Online" : backendStatus}</strong>
             <small>Evidence station ready</small>
           </div>
         </div>
 
         <nav className="navigation">
-          <NavItem
-            icon={<LayoutDashboard size={19} />}
-            label="Dashboard"
-            active
-          />
+          <button
+            className={`nav-item ${activePage === "dashboard" ? "active" : ""}`}
+            onClick={() => navigateTo("dashboard")}
+          >
+            <LayoutDashboard size={19} />
+            <span>Dashboard</span>
+          </button>
 
-          <NavItem icon={<FolderOpen size={19} />} label="Cases" />
-          <NavItem icon={<Database size={19} />} label="Evidence" />
-          <NavItem icon={<Usb size={19} />} label="Acquisition" />
-          <NavItem icon={<PackageSearch size={19} />} label="Chain of Custody" />
-          <NavItem icon={<FileSearch size={19} />} label="Reports" />
+          <button
+            className={`nav-item ${activePage === "cases" || activePage === "case-details" ? "active" : ""}`}
+            onClick={() => navigateTo("cases")}
+          >
+            <FolderOpen size={19} />
+            <span>Cases</span>
+          </button>
 
-          <div className="nav-section">SYSTEM</div>
+          <button
+            className={`nav-item ${activePage === "evidence" ? "active" : ""}`}
+            onClick={() => navigateTo("evidence")}
+          >
+            <Database size={19} />
+            <span>Evidence</span>
+          </button>
 
-          <NavItem icon={<Activity size={19} />} label="Audit Logs" />
-          <NavItem icon={<Users size={19} />} label="Users" />
-          <NavItem icon={<Settings size={19} />} label="Settings" />
+          <button
+            className={`nav-item ${activePage === "custody" ? "active" : ""}`}
+            onClick={() => navigateTo("custody")}
+          >
+            <PackageSearch size={19} />
+            <span>Chain of Custody</span>
+          </button>
+
+          <div className="nav-section">SYSTEM & AUDIT</div>
+
+          <button
+            className={`nav-item ${activePage === "audit-logs" ? "active" : ""}`}
+            onClick={() => navigateTo("audit-logs")}
+          >
+            <Activity size={19} />
+            <span>Audit Logs</span>
+          </button>
+
+          <button
+            className={`nav-item ${activePage === "users" ? "active" : ""}`}
+            onClick={() => navigateTo("users")}
+          >
+            <Users size={19} />
+            <span>Users</span>
+          </button>
         </nav>
 
         <div className="sidebar-footer">
-          <div className="operator-avatar">SK</div>
+          <div className="operator-avatar">{user?.username.substring(0, 2).toUpperCase() || "SK"}</div>
 
           <div className="operator-info">
-            <strong>S. Kumar</strong>
-            <span>Forensic Operator</span>
+            <strong>{user?.username}</strong>
+            <span>{user?.role}</span>
           </div>
 
-          <ChevronRight size={17} />
+          <button
+            onClick={logout}
+            title="Sign Out"
+            style={{ background: "transparent", border: 0, color: "#778396", cursor: "pointer", padding: "4px" }}
+          >
+            <LogOut size={17} />
+          </button>
         </div>
       </aside>
 
-      {sidebarOpen && (
-        <div
-          className="sidebar-overlay"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
+      {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
 
+      {/* MAIN CONTENT */}
       <main className="main-content">
         <header className="topbar">
-          <button
-            className="mobile-menu"
-            onClick={() => setSidebarOpen(true)}
-          >
+          <button className="mobile-menu" onClick={() => setSidebarOpen(true)}>
             <Menu size={23} />
           </button>
 
           <div className="page-heading">
             <span className="breadcrumb">CEB / Workspace</span>
-            <h2>Investigation Dashboard</h2>
+            <h2>
+              {activePage === "dashboard" && "Investigation Dashboard"}
+              {activePage === "cases" && "Case Directory"}
+              {activePage === "case-details" && `Case: ${activeParam}`}
+              {activePage === "evidence" && "Digital Evidence Registry"}
+              {activePage === "custody" && "Chain of Custody"}
+              {activePage === "audit-logs" && "System Audit Trail"}
+              {activePage === "users" && "Investigator & User Accounts"}
+            </h2>
           </div>
 
           <div className="topbar-actions">
-            <button className="icon-button">
-              <Search size={19} />
-            </button>
-
-            <button className="icon-button notification">
-              <Bell size={19} />
-              <span />
-            </button>
-
             <div className="topbar-user">
-              <div className="operator-avatar">SK</div>
+              <div className="operator-avatar">{user?.username.substring(0, 2).toUpperCase() || "SK"}</div>
               <div>
-                <strong>S. Kumar</strong>
-                <small>Operator</small>
+                <strong>{user?.username}</strong>
+                <small>{user?.role}</small>
               </div>
             </div>
           </div>
         </header>
 
-        <section className="dashboard">
-          <div className="welcome-row">
-            <div>
-              <p className="eyebrow">FORENSIC WORKSPACE</p>
-              <h3>Good morning, Sandeep.</h3>
-              <p className="muted">
-                Monitor investigations, evidence integrity and system status.
-              </p>
-            </div>
+        {/* PAGE ROUTING */}
+        {activePage === "dashboard" && (
+          <DashboardPage
+            onNavigate={navigateTo}
+            onOpenCreateCase={() => setIsCreateCaseOpen(true)}
+          />
+        )}
 
-            <button className="primary-button">
-              <FolderOpen size={18} />
-              Create New Case
-            </button>
-          </div>
+        {activePage === "cases" && (
+          <CasesPage
+            onNavigate={navigateTo}
+            onOpenCreateCase={() => setIsCreateCaseOpen(true)}
+          />
+        )}
 
-          <section className="stats-grid">
-            <StatCard
-              icon={<FolderOpen size={21} />}
-              label="Active Cases"
-              value="12"
-              change="+3 this month"
-            />
+        {activePage === "case-details" && activeParam && (
+          <CaseDetailsPage
+            caseCode={activeParam}
+            onNavigate={navigateTo}
+            onOpenRegisterEvidence={handleOpenRegisterEvidence}
+            onOpenUploadModal={(ev) => setUploadEvidenceItem(ev)}
+          />
+        )}
 
-            <StatCard
-              icon={<Database size={21} />}
-              label="Evidence Items"
-              value="47"
-              change="+8 this week"
-            />
+        {activePage === "evidence" && (
+          <EvidencePage
+            cases={casesList}
+            onOpenRegisterModal={() => handleOpenRegisterEvidence()}
+            onOpenUploadModal={(ev) => setUploadEvidenceItem(ev)}
+            onOpenCustodyModal={(ev) => setCustodyEvidenceItem(ev)}
+          />
+        )}
 
-            <StatCard
-              icon={<BadgeCheck size={21} />}
-              label="Verified Evidence"
-              value="44"
-              change="93.6% verified"
-            />
+        {activePage === "custody" && <CustodyPage />}
 
-            <StatCard
-              icon={<HardDrive size={21} />}
-              label="Storage Used"
-              value="426 GB"
-              change="of 1 TB available"
-            />
-          </section>
+        {activePage === "audit-logs" && <AuditLogsPage />}
 
-          <section className="content-grid">
-            <div className="panel cases-panel">
-              <PanelHeader
-                title="Active Investigations"
-                subtitle="Recently updated cases"
-                action="View all"
-              />
-
-              <div className="case-list">
-                {cases.map((item) => (
-                  <div className="case-row" key={item.id}>
-                    <div className="case-icon">
-                      <ShieldEllipsis size={20} />
-                    </div>
-
-                    <div className="case-main">
-                      <strong>{item.title}</strong>
-                      <span>
-                        {item.id} · {item.investigator}
-                      </span>
-                    </div>
-
-                    <div className="case-evidence">
-                      <strong>{item.evidence}</strong>
-                      <span>evidence</span>
-                    </div>
-
-                    <StatusBadge status={item.status} />
-
-                    <div className="case-updated">
-                      <Clock3 size={14} />
-                      {item.updated}
-                    </div>
-
-                    <ChevronRight className="row-arrow" size={17} />
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="panel system-panel">
-              <PanelHeader
-                title="Evidence Station"
-                subtitle="Hardware status"
-              />
-
-              <div className="hardware-status">
-                <HardwareItem
-                  icon={<Radio size={19} />}
-                  label="Raspberry Pi"
-                  status="Online"
-                />
-
-                <HardwareItem
-                  icon={<HardDrive size={19} />}
-                  label="NVMe Storage"
-                  status="Mounted"
-                />
-
-                <HardwareItem
-                  icon={<Usb size={19} />}
-                  label="Write Blocker"
-                  status="Protected"
-                />
-
-                <HardwareItem
-                  icon={<Fingerprint size={19} />}
-                  label="Authentication"
-                  status="Ready"
-                />
-
-                <HardwareItem
-                  icon={<Camera size={19} />}
-                  label="Evidence Camera"
-                  status="Ready"
-                />
-              </div>
-
-              <div className="tamper-card">
-                <div className="tamper-icon">
-                  <LockKeyhole size={18} />
-                </div>
-
-                <div>
-                  <strong>Tamper protection active</strong>
-                  <span>No security events detected</span>
-                </div>
-
-                <CircleCheck size={20} />
-              </div>
-            </div>
-          </section>
-
-          <section className="content-grid lower-grid">
-            <div className="panel evidence-panel">
-              <PanelHeader
-                title="Recent Evidence"
-                subtitle="Latest registered evidence"
-                action="View evidence"
-              />
-
-              <div className="table-wrapper">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Evidence</th>
-                      <th>Type</th>
-                      <th>Size</th>
-                      <th>SHA-256</th>
-                      <th>Integrity</th>
-                    </tr>
-                  </thead>
-
-                  <tbody>
-                    {evidence.map((item) => (
-                      <tr key={item.id}>
-                        <td>
-                          <div className="evidence-name">
-                            <div className="file-icon">
-                              <Archive size={16} />
-                            </div>
-
-                            <div>
-                              <strong>{item.name}</strong>
-                              <span>{item.id}</span>
-                            </div>
-                          </div>
-                        </td>
-
-                        <td>{item.type}</td>
-                        <td>{item.size}</td>
-
-                        <td>
-                          <div className="hash">
-                            <Hash size={14} />
-                            {item.hash}
-                          </div>
-                        </td>
-
-                        <td>
-                          <span
-                            className={`integrity ${
-                              item.status === "Verified"
-                                ? "verified"
-                                : "processing"
-                            }`}
-                          >
-                            {item.status === "Verified" ? (
-                              <CircleCheck size={14} />
-                            ) : (
-                              <Activity size={14} />
-                            )}
-
-                            {item.status}
-                          </span>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-
-            <div className="panel activity-panel">
-              <PanelHeader
-                title="Chain of Custody"
-                subtitle="Latest activity"
-                action="View log"
-              />
-
-              <div className="timeline">
-                <TimelineItem
-                  icon={<Hash size={16} />}
-                  title="Evidence hash verified"
-                  description="EVID-001 · SHA-256"
-                  time="12 min ago"
-                />
-
-                <TimelineItem
-                  icon={<LockKeyhole size={16} />}
-                  title="Evidence secured"
-                  description="EVID-002 · Storage vault"
-                  time="31 min ago"
-                />
-
-                <TimelineItem
-                  icon={<Usb size={16} />}
-                  title="Acquisition completed"
-                  description="CASE-2026-003"
-                  time="1 hr ago"
-                />
-
-                <TimelineItem
-                  icon={<Users size={16} />}
-                  title="Evidence transferred"
-                  description="A. Sharma → S. Kumar"
-                  time="2 hrs ago"
-                />
-              </div>
-            </div>
-          </section>
-
-          <footer className="dashboard-footer">
-            <div>
-              <span className="footer-indicator" />
-              All critical systems operational
-            </div>
-
-            <span>CEB v0.1.0 · Forensic Evidence Platform</span>
-          </footer>
-        </section>
+        {activePage === "users" && <UsersPage />}
       </main>
+
+      {/* MODAL DIALOGS */}
+      <CreateCaseModal
+        isOpen={isCreateCaseOpen}
+        onClose={() => setIsCreateCaseOpen(false)}
+        onCaseCreated={(newCase) => {
+          loadAllCases();
+          navigateTo("case-details", newCase.case_id);
+        }}
+      />
+
+      <RegisterEvidenceModal
+        isOpen={isRegisterEvidenceOpen}
+        cases={casesList}
+        selectedCaseId={registerCaseId}
+        onClose={() => setIsRegisterEvidenceOpen(false)}
+        onEvidenceRegistered={() => {
+          loadAllCases();
+          if (activePage === "evidence") {
+            navigateTo("evidence");
+          }
+        }}
+      />
+
+      <UploadEvidenceModal
+        isOpen={!!uploadEvidenceItem}
+        evidence={uploadEvidenceItem}
+        onClose={() => setUploadEvidenceItem(null)}
+        onUploadSuccess={() => {
+          if (activePage === "evidence") navigateTo("evidence");
+          else if (activePage === "case-details") loadAllCases();
+        }}
+      />
+
+      <AddCustodyModal
+        isOpen={!!custodyEvidenceItem}
+        evidence={custodyEvidenceItem}
+        onClose={() => setCustodyEvidenceItem(null)}
+        onCustodyAdded={() => {
+          if (activePage === "custody") navigateTo("custody");
+        }}
+      />
     </div>
   );
-}
+};
 
-function NavItem({
-  icon,
-  label,
-  active = false,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  active?: boolean;
-}) {
+function App() {
   return (
-    <button className={`nav-item ${active ? "active" : ""}`}>
-      {icon}
-      <span>{label}</span>
-    </button>
-  );
-}
-
-function StatCard({
-  icon,
-  label,
-  value,
-  change,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  value: string;
-  change: string;
-}) {
-  return (
-    <div className="stat-card">
-      <div className="stat-icon">{icon}</div>
-
-      <div className="stat-content">
-        <span>{label}</span>
-        <strong>{value}</strong>
-        <small>{change}</small>
-      </div>
-
-      <ArrowUpRight className="stat-arrow" size={17} />
-    </div>
-  );
-}
-
-function PanelHeader({
-  title,
-  subtitle,
-  action,
-}: {
-  title: string;
-  subtitle: string;
-  action?: string;
-}) {
-  return (
-    <div className="panel-header">
-      <div>
-        <h4>{title}</h4>
-        <p>{subtitle}</p>
-      </div>
-
-      {action && (
-        <button className="panel-action">
-          {action}
-          <ChevronRight size={15} />
-        </button>
-      )}
-    </div>
-  );
-}
-
-function StatusBadge({ status }: { status: CaseStatus }) {
-  return (
-    <span className={`status-badge ${status.toLowerCase()}`}>
-      <span />
-      {status}
-    </span>
-  );
-}
-
-function HardwareItem({
-  icon,
-  label,
-  status,
-}: {
-  icon: React.ReactNode;
-  label: string;
-  status: string;
-}) {
-  return (
-    <div className="hardware-item">
-      <div className="hardware-icon">{icon}</div>
-
-      <div>
-        <strong>{label}</strong>
-        <span>{status}</span>
-      </div>
-
-      <span className="hardware-dot" />
-    </div>
-  );
-}
-
-function TimelineItem({
-  icon,
-  title,
-  description,
-  time,
-}: {
-  icon: React.ReactNode;
-  title: string;
-  description: string;
-  time: string;
-}) {
-  return (
-    <div className="timeline-item">
-      <div className="timeline-icon">{icon}</div>
-
-      <div className="timeline-content">
-        <strong>{title}</strong>
-        <span>{description}</span>
-        <small>{time}</small>
-      </div>
-    </div>
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 }
 
