@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from .config import CORS_ORIGINS
 from .database import Base, engine, SessionLocal
 from .models import User
-from .routers import audit, auth, cases, custody, dashboard, evidence, users
+from .routers import audit, auth, cases, custody, dashboard, evidence, users, hardware
 from .security.auth import hash_password, verify_password
 
 
@@ -104,6 +104,7 @@ app.include_router(evidence.router)
 app.include_router(custody.router)
 app.include_router(audit.router)
 app.include_router(dashboard.router)
+app.include_router(hardware.router)
 
 
 @app.get("/", tags=["System"])

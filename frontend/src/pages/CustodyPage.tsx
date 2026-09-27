@@ -7,19 +7,19 @@ export const CustodyPage: React.FC = () => {
   const [custodyLogs, setCustodyLogs] = useState<CustodyEvent[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const fetchGlobalCustody = async () => {
-    try {
-      setLoading(true);
-      const response = await api.get<DashboardStats>("/dashboard/stats");
-      setCustodyLogs(response.data.recent_custody_events);
-    } catch (err) {
-      console.error("Failed to fetch chain of custody:", err);
-    } finally {
-      setLoading(false);
-    }
-  };
-
   useEffect(() => {
+    const fetchGlobalCustody = async () => {
+      try {
+        setLoading(true);
+        const response = await api.get<CustodyEvent[]>("/custody");
+        setCustodyLogs(response.data);
+      } catch (err) {
+        console.error("Failed to fetch chain of custody:", err);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     fetchGlobalCustody();
   }, []);
 

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -26,7 +26,7 @@ class User(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
     )
 
     cases: Mapped[list["Case"]] = relationship(
@@ -71,7 +71,7 @@ class Case(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
     )
 
     creator: Mapped["User"] = relationship(
@@ -135,7 +135,7 @@ class Evidence(Base):
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
     )
 
     case: Mapped["Case"] = relationship(
@@ -177,7 +177,7 @@ class CustodyEvent(Base):
     )
     timestamp: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
     )
 
     evidence: Mapped["Evidence"] = relationship(
@@ -208,7 +208,7 @@ class AuditLog(Base):
     )
     timestamp: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.utcnow,
+        default=lambda: datetime.now(timezone.utc),
     )
 
     user: Mapped["User | None"] = relationship()

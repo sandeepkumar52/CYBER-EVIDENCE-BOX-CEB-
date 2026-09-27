@@ -1,315 +1,65 @@
- **CYBER-EVIDENCE-BOX-CEB-**
- Cyber Evidence Box (CEB) is a portable digital-forensics and cybersecurity system designed to securely acquire preserve verify  cryptographic hashing, encrypted storage, investigator authentication, tamper detection, chain-of-custody management, audit logging, and automated forensic reporting into a single portable platform.
- 🔐 Cyber Evidence Box (CEB)
+# Cyber Evidence Box (CEB)
 
-> A Portable Digital Forensic Evidence Acquisition, Preservation & Management System
+CEB is a digital forensic evidence management and preservation platform. It allows authorized investigators to create cases, register digital evidence, verify cryptographic hashes, and track the chain of custody.
 
-## 📌 About the Project
+## Architecture
 
-**Cyber Evidence Box (CEB)** is a portable digital-forensics system designed to help investigators securely collect, preserve, verify, and manage digital evidence during cybercrime investigations.
+*   **Frontend**: React, TypeScript, Vite, React Router, Axios
+*   **Backend**: Python, FastAPI, SQLAlchemy, Pydantic, Uvicorn
+*   **Database**: SQLite (Development) / PostgreSQL-ready
+*   **Authentication**: JWT (JSON Web Tokens) with bcrypt password hashing
 
-The system provides a controlled workflow for handling evidence from storage devices while maintaining **evidence integrity, confidentiality, accountability, and chain of custody**.
+## Project Structure
 
-CEB is designed as a physical forensic appliance rather than only a software application. It combines evidence handling, security mechanisms, storage, authentication, monitoring, and investigation management into a single portable unit.
-
----
-
-## 🎯 Problem Statement
-
-Digital evidence can easily be modified, damaged, lost, or improperly documented during an investigation.
-
-Traditional evidence-handling workflows may require multiple devices and manual processes for:
-
-* Evidence acquisition
-* Evidence verification
-* Secure storage
-* Investigator authentication
-* Chain-of-custody documentation
-* Evidence tracking
-* Investigation reporting
-
-CEB aims to bring these processes together into one controlled and portable system.
-
----
-
-## 💡 What CEB Does
-
-CEB provides a workflow for:
-
-* 🔍 Detecting and identifying evidence devices
-* 🛡️ Protecting original evidence during acquisition
-* 💾 Creating forensic evidence copies/images
-* 🔐 Protecting stored evidence
-* #️⃣ Generating cryptographic hashes
-* ✅ Verifying evidence integrity
-* 👤 Authenticating investigators
-* 📋 Maintaining chain-of-custody records
-* 🚨 Detecting physical tampering
-* 📝 Maintaining investigation logs
-* 📊 Managing cases and evidence
-* 📄 Generating forensic reports
-* 🤖 Assisting investigators with optional AI-based evidence triage
-
----
-
-## 🔄 How It Works
-
-```text
-                ┌──────────────────┐
-                │  Digital Evidence│
-                │ USB / HDD / SSD  │
-                │ SD Card / Others │
-                └────────┬─────────┘
-                         │
-                         ▼
-                ┌──────────────────┐
-                │ Evidence         │
-                │ Protection       │
-                └────────┬─────────┘
-                         │
-                         ▼
-                ┌──────────────────┐
-                │ Evidence         │
-                │ Acquisition      │
-                └────────┬─────────┘
-                         │
-                         ▼
-                ┌──────────────────┐
-                │ Integrity        │
-                │ Verification     │
-                └────────┬─────────┘
-                         │
-                         ▼
-                ┌──────────────────┐
-                │ Secure Evidence  │
-                │ Storage          │
-                └────────┬─────────┘
-                         │
-              ┌──────────┴──────────┐
-              ▼                     ▼
-       Chain of Custody       Forensic Analysis
-              │                     │
-              └──────────┬──────────┘
-                         ▼
-                ┌──────────────────┐
-                │ Forensic Report  │
-                └──────────────────┘
+```
+CAS Hardware/
+├── frontend/             # React SPA
+│   ├── src/              # Components, Context, Pages, Types
+│   ├── package.json
+│   └── vite.config.ts
+├── Backend/              # FastAPI Application
+│   ├── app/              # Core API Logic
+│   │   ├── routers/      # API Endpoints
+│   │   ├── hardware/     # Hardware Abstraction Layer
+│   │   ├── models.py     # SQLAlchemy DB Models
+│   │   └── main.py       # FastAPI Entrypoint
+│   ├── storage/          # Secured File Storage for Evidence
+│   └── requirements.txt
+├── .gitignore
+└── README.md
 ```
 
----
+## Setup & Installation
 
-## 🔐 Core Principles
+### Backend
 
-CEB is built around four major principles:
+1.  Navigate to the `Backend` directory: `cd Backend`
+2.  Create virtual environment: `python -m venv venv`
+3.  Activate it: `.\venv\Scripts\activate` (Windows) or `source venv/bin/activate` (Mac/Linux)
+4.  Install dependencies: `pip install -r requirements.txt`
+5.  Run server: `uvicorn app.main:app --reload`
+6.  *The server will start at http://localhost:8000. It automatically initializes the SQLite database with default users on first run.*
 
-### 1. Preserve
+### Frontend
 
-The original evidence should be protected from unnecessary modification.
+1.  Navigate to the `frontend` directory: `cd frontend`
+2.  Install dependencies: `npm install`
+3.  Run dev server: `npm run dev`
+4.  *The frontend will start at http://localhost:5173.*
 
-### 2. Verify
+## Default Credentials
 
-Acquired evidence should be verifiable through cryptographic integrity checks.
+The system seeds the following users upon first initialization:
 
-### 3. Protect
+*   **Admin:** `admin` / `admin123`
+*   **Investigator:** `investigator01` / `investigator123`
 
-Sensitive evidence should be protected from unauthorized access.
+## Hardware Integration
 
-### 4. Track
+CEB is designed to support hardware integration. The abstraction layer is available at `Backend/app/hardware`. A mock adapter is currently in use, exposing status via `GET /hardware/status`. When physical GPS/GNSS or controller boards are ready, a Serial adapter can seamlessly replace the mock implementation without affecting core logic.
 
-Important evidence-handling activities should be recorded to maintain accountability.
+## Security Considerations
 
----
-
-## 📦 What We Need
-
-The project requires both **hardware and software components**.
-
-### Hardware
-
-The prototype may require:
-
-* Compact computing unit
-* Dedicated evidence storage
-* Appropriate write-blocking hardware
-* Touchscreen/display
-* Evidence-device interfaces
-* Authentication device
-* Tamper-detection mechanism
-* Status indicators
-* Buzzer/alarm
-* Location module
-* Camera
-* Portable power source
-* Protective enclosure
-* Required cables, adapters, and connectors
-
-The exact hardware configuration may change depending on the prototype design and available components.
-
-### Software
-
-The system requires software for:
-
-* User authentication
-* Case management
-* Evidence-device detection
-* Evidence acquisition
-* Hash generation and verification
-* Evidence protection
-* Secure storage management
-* Chain-of-custody tracking
-* Audit logging
-* Tamper-event logging
-* Report generation
-* Optional forensic triage
-
----
-
-## 📁 Project Structure
-
-The repository is organized around the major components of the CEB system.
-
-```text
-Cyber-Evidence-Box/
-│
-├── hardware/
-│   ├── diagrams/
-│   ├── schematics/
-│   └── enclosure/
-│
-├── software/
-│   ├── acquisition/
-│   ├── evidence/
-│   ├── authentication/
-│   ├── custody/
-│   ├── security/
-│   └── reporting/
-│
-├── ai/
-│   └── forensic-triage/
-│
-├── documentation/
-│   ├── architecture/
-│   ├── workflow/
-│   └── research/
-│
-├── tests/
-│
-├── README.md
-└── LICENSE
-```
-
-> The final repository structure may change as development progresses.
-
----
-
-## 🧪 Development Approach
-
-CEB will be developed incrementally.
-
-### Phase 1 — Core Platform
-
-* Build the portable hardware platform
-* Set up the main controller
-* Connect storage
-* Establish the user interface
-
-### Phase 2 — Evidence Handling
-
-* Device detection
-* Evidence identification
-* Acquisition workflow
-* Integrity verification
-
-### Phase 3 — Security
-
-* Authentication
-* Secure evidence storage
-* Access control
-* Audit logging
-* Tamper detection
-
-### Phase 4 — Evidence Management
-
-* Case management
-* Chain of custody
-* Evidence tracking
-* Report generation
-
-### Phase 5 — AI Assistance
-
-* Artifact processing
-* Suspicious artifact identification
-* Evidence summarization
-* Investigator-assisted triage
-
-### Phase 6 — Testing
-
-* Functional testing
-* Evidence integrity testing
-* Security testing
-* Hardware testing
-* Tamper-event testing
-* Performance testing
-
----
-
-## 🧑‍💻 Intended Users
-
-CEB is intended as a **prototype and academic cybersecurity/digital-forensics platform** that can demonstrate workflows relevant to:
-
-* Cybersecurity students
-* Digital-forensics researchers
-* Security researchers
-* Incident-response teams
-* Digital-forensics investigators
-* Academic laboratories
-
-The system should not be considered a certified commercial forensic appliance unless independently validated and certified for such use.
-
----
-
-## ⚠️ Important Note
-
-CEB is designed for **authorized digital-forensics and cybersecurity investigations only**.
-
-The system should only be used on devices and evidence for which the investigator has appropriate authorization.
-
-AI-assisted results are intended to support investigation and should be independently validated by a qualified investigator.
-
----
-
-## 🚀 Project Goal
-
-The ultimate goal of CEB is to create a **portable forensic evidence appliance** that provides a structured workflow from initial evidence collection through integrity verification, secure preservation, chain-of-custody management, analysis assistance, and final reporting.
-
-### In simple terms:
-
-> **CEB helps investigators collect digital evidence safely, prove its integrity, protect it, track its handling, and organize it for further investigation.**
-
----
-
-# 📌 Project Status
-
-**Status:** 🚧 Under Development
-
-The system is being developed as an academic cybersecurity and digital-forensics project. Individual features may be in different stages of development, including research, prototype, implementation, and testing.
-
----
-
-## 🤝 Contribution
-
-Contributions, suggestions, testing feedback, and research ideas are welcome.
-
-Before contributing, please review the project documentation and ensure that all development follows responsible cybersecurity and digital-forensics practices.
-
----
-
-## 📄 License
-
-Add the project's selected open-source license here once the team has decided on the licensing model.
-
----
-
-# 🔐 Cyber Evidence Box
-
-**Preserve. Verify. Protect. Track.**
+*   Never commit `.env` or the `storage/` directory to source control.
+*   The system uses SHA-256 for evidence hashing. A matching hash confirms data integrity but *does not independently establish legal admissibility without chain of custody documentation*.
+*   Custody and audit logs are append-only.

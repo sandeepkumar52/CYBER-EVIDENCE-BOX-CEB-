@@ -18,7 +18,7 @@ export const RegisterEvidenceModal: React.FC<Props> = ({
   onClose,
   onEvidenceRegistered,
 }) => {
-  const [evidenceId, setEvidenceId] = useState(`EVID-2026-${Math.floor(100 + Math.random() * 900)}`);
+  const [evidenceId, setEvidenceId] = useState(() => `EVID-2026-${Math.floor(100 + Math.random() * 900)}`);
   const [caseId, setCaseId] = useState<number>(selectedCaseId || (cases[0]?.id ?? 1));
   const [evidenceType, setEvidenceType] = useState<EvidenceType>("Disk Image");
   const [description, setDescription] = useState("");

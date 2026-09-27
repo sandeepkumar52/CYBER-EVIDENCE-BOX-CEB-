@@ -10,7 +10,7 @@ interface Props {
 }
 
 export const CreateCaseModal: React.FC<Props> = ({ isOpen, onClose, onCaseCreated }) => {
-  const [caseId, setCaseId] = useState(`CASE-2026-${Math.floor(100 + Math.random() * 900)}`);
+  const [caseId, setCaseId] = useState(() => `CASE-2026-${Math.floor(100 + Math.random() * 900)}`);
   const [caseName, setCaseName] = useState("");
   const [description, setDescription] = useState("");
   const [status, setStatus] = useState<"Active" | "Under Investigation" | "Closed">("Active");

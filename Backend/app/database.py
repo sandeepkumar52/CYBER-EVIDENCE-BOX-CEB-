@@ -1,8 +1,7 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
-
-DATABASE_URL = "sqlite:///./ceb.db"
+from .config import DATABASE_URL
 
 
 class Base(DeclarativeBase):
@@ -11,7 +10,7 @@ class Base(DeclarativeBase):
 
 engine = create_engine(
     DATABASE_URL,
-    connect_args={"check_same_thread": False},
+    connect_args={"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {},
 )
 
 SessionLocal = sessionmaker(

@@ -33,24 +33,6 @@ export const LoginPage: React.FC = () => {
     }
   };
 
-  const handleQuickLogin = async (user: string, pass: string) => {
-    setUsername(user);
-    setPassword(pass);
-    setError(null);
-    setSubmitting(true);
-    try {
-      const response = await api.post<AuthResponse>("/auth/login", {
-        username: user,
-        password: pass,
-      });
-      login(response.data.access_token, response.data.user);
-    } catch (err: any) {
-      setError("Failed to log in with quick credentials");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
   return (
     <div className="login-container">
       <div className="login-card">
@@ -66,11 +48,11 @@ export const LoginPage: React.FC = () => {
 
         <form onSubmit={handleSubmit}>
           <div className="form-group">
-            <label>Username</label>
+            <label>Email or Username</label>
             <input
               type="text"
               className="form-control"
-              placeholder="Enter investigator username"
+              placeholder="Enter email or username"
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
@@ -99,29 +81,6 @@ export const LoginPage: React.FC = () => {
           </button>
         </form>
 
-        <div style={{ marginTop: "24px", paddingTop: "18px", borderTop: "1px solid #1c2736" }}>
-          <small style={{ color: "#647387", display: "block", marginBottom: "10px", textAlign: "center" }}>
-            Quick Demo Logins
-          </small>
-          <div style={{ display: "flex", gap: "10px" }}>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ flex: 1 }}
-              onClick={() => handleQuickLogin("investigator01", "investigator123")}
-            >
-              Investigator
-            </button>
-            <button
-              type="button"
-              className="secondary-button"
-              style={{ flex: 1 }}
-              onClick={() => handleQuickLogin("admin", "admin123")}
-            >
-              Admin
-            </button>
-          </div>
-        </div>
       </div>
     </div>
   );

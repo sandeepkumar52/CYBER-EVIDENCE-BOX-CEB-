@@ -19,6 +19,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [token, setToken] = useState<string | null>(localStorage.getItem("ceb_token"));
   const [loading, setLoading] = useState<boolean>(true);
 
+  const logout = () => {
+    localStorage.removeItem("ceb_token");
+    localStorage.removeItem("ceb_user");
+    setToken(null);
+    setUser(null);
+  };
+
   const fetchCurrentUser = async () => {
     try {
       const response = await api.get<User>("/auth/me");
@@ -44,13 +51,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.setItem("ceb_user", JSON.stringify(newUser));
     setToken(newToken);
     setUser(newUser);
-  };
-
-  const logout = () => {
-    localStorage.removeItem("ceb_token");
-    localStorage.removeItem("ceb_user");
-    setToken(null);
-    setUser(null);
   };
 
   return (

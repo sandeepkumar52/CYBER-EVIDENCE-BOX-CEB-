@@ -88,3 +88,20 @@ def get_custody_history(
         .order_by(CustodyEvent.timestamp.asc())
         .all()
     )
+
+
+@router.get(
+    "/custody",
+    response_model=list[CustodyEventResponse],
+)
+def get_all_custody_history(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    return (
+        db.query(CustodyEvent)
+        .order_by(CustodyEvent.timestamp.desc())
+        .limit(limit)
+        .all()
+    )
