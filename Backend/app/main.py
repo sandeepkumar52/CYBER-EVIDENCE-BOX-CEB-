@@ -9,6 +9,9 @@ from .database import Base, engine, SessionLocal
 from .models import User
 from .routers import audit, auth, cases, custody, dashboard, evidence, users, hardware
 from .security.auth import hash_password, verify_password
+from .services.usb_service import usb_service
+from .websocket_manager import ws_manager
+from fastapi import WebSocket, WebSocketDisconnect
 
 
 def init_db():
@@ -77,7 +80,9 @@ init_db()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    usb_service.start_monitoring()
     yield
+    usb_service.stop_monitoring()
 
 
 app = FastAPI(
@@ -123,3 +128,13 @@ def health_check():
         "status": "healthy",
         "system": "Cyber Evidence Box",
     }
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    await ws_manager.connect(websocket)
+    try:
+        while True:
+            # We don't expect messages from the client yet, just keep connection open
+            await websocket.receive_text()
+    except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)

@@ -59,6 +59,8 @@ export interface Evidence {
   file_size_bytes: number | null;
   status: EvidenceStatus;
   created_at: string;
+  is_encrypted?: boolean;
+  encrypted_sha256?: string | null;
 }
 
 export interface EvidenceVerifyResult {

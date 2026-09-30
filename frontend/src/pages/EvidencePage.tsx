@@ -9,9 +9,11 @@ import {
   Search,
   ShieldCheck,
   Upload,
+  Lock,
 } from "lucide-react";
 import api from "../services/api";
 import type { Case, Evidence, EvidenceVerifyResult } from "../types";
+import { EvidenceViewerModal } from "../components/EvidenceViewerModal";
 
 interface Props {
   cases: Case[];
@@ -32,6 +34,7 @@ export const EvidencePage: React.FC<Props> = ({
   const [loading, setLoading] = useState(true);
   const [verifyingId, setVerifyingId] = useState<string | null>(null);
   const [verifyResult, setVerifyResult] = useState<EvidenceVerifyResult | null>(null);
+  const [viewEvidence, setViewEvidence] = useState<Evidence | null>(null);
 
   const fetchEvidence = async () => {
     try {
@@ -185,10 +188,15 @@ export const EvidencePage: React.FC<Props> = ({
                   <tr key={item.id}>
                     <td>
                       <div className="evidence-name">
-                        <div className="file-icon"><Archive size={16} /></div>
+                        <div className="file-icon">
+                          {item.is_encrypted ? <Lock size={16} color="#059669" /> : <Archive size={16} />}
+                        </div>
                         <div>
                           <strong>{item.evidence_id}</strong>
-                          <span>{item.description || item.evidence_type}</span>
+                          <span>
+                            {item.description || item.evidence_type}
+                            {item.is_encrypted && " (🔒 Encrypted)"}
+                          </span>
                         </div>
                       </div>
                     </td>
@@ -229,6 +237,13 @@ export const EvidencePage: React.FC<Props> = ({
                           <PackageSearch size={14} /> Custody
                         </button>
                         <button
+                          className="secondary-button"
+                          title="View Evidence"
+                          onClick={() => setViewEvidence(item)}
+                        >
+                          <Lock size={14} /> View
+                        </button>
+                        <button
                           className="primary-button"
                           style={{ padding: "4px 8px", fontSize: "10px" }}
                           disabled={verifyingId === item.evidence_id || !item.hash_value}
@@ -246,6 +261,13 @@ export const EvidencePage: React.FC<Props> = ({
           </table>
         </div>
       </div>
+
+      {viewEvidence && (
+        <EvidenceViewerModal
+          evidence={viewEvidence}
+          onClose={() => setViewEvidence(null)}
+        />
+      )}
     </div>
   );
 };

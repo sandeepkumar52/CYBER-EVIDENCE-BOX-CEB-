@@ -127,6 +127,8 @@ class EvidenceResponse(BaseModel):
     file_size_bytes: int | None = None
     status: str
     created_at: datetime
+    is_encrypted: bool = False
+    encrypted_sha256: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -137,6 +139,12 @@ class EvidenceVerifyResponse(BaseModel):
     expected_hash: str | None
     computed_hash: str | None
     message: str
+
+class UnlockResponse(BaseModel):
+    evidence_id: str
+    unlocked: bool
+    message: str
+    expires_in_minutes: int
 
 
 # Custody Event Schemas

@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, LargeBinary
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -138,12 +138,69 @@ class Evidence(Base):
         default=lambda: datetime.now(timezone.utc),
     )
 
+    @property
+    def is_encrypted(self) -> bool:
+        return self.encryption_metadata is not None
+        
+    @property
+    def encrypted_sha256(self) -> str | None:
+        if self.encryption_metadata:
+            return self.encryption_metadata.encrypted_sha256
+        return None
+
     case: Mapped["Case"] = relationship(
         back_populates="evidence"
     )
     custody_events: Mapped[list["CustodyEvent"]] = relationship(
         back_populates="evidence",
         cascade="all, delete-orphan",
+    )
+    encryption_metadata: Mapped["EvidenceEncryption | None"] = relationship(
+        back_populates="evidence",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
+
+class EvidenceEncryption(Base):
+    __tablename__ = "evidence_encryption"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    evidence_id: Mapped[int] = mapped_column(
+        ForeignKey("evidence.id"),
+        unique=True,
+        nullable=False,
+    )
+    encryption_algorithm: Mapped[str] = mapped_column(
+        String(50),
+        default="AES-256-GCM",
+    )
+    key_version: Mapped[int] = mapped_column(
+        Integer,
+        default=1,
+    )
+    encrypted_dek: Mapped[bytes] = mapped_column(
+        LargeBinary,
+        nullable=False,
+    )
+    nonce: Mapped[bytes] = mapped_column(
+        LargeBinary,
+        nullable=False,
+    )
+    encrypted_sha256: Mapped[str | None] = mapped_column(
+        String(128),
+        nullable=True,
+    )
+    authentication_tag: Mapped[bytes] = mapped_column(
+        LargeBinary,
+        nullable=False,
+    )
+    encrypted_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(timezone.utc),
+    )
+
+    evidence: Mapped["Evidence"] = relationship(
+        back_populates="encryption_metadata"
     )
 
 

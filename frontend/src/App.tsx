@@ -21,6 +21,7 @@ import { RegisterEvidenceModal } from "./components/RegisterEvidenceModal";
 import { UploadEvidenceModal } from "./components/UploadEvidenceModal";
 import { AddCustodyModal } from "./components/AddCustodyModal";
 import { LoginPage } from "./components/LoginPage";
+import { USBScanModal } from "./components/USBScanModal";
 
 import { DashboardPage } from "./pages/DashboardPage";
 import { CasesPage } from "./pages/CasesPage";
@@ -94,6 +95,7 @@ const MainApp: React.FC = () => {
 
   return (
     <div className="app-shell">
+      <USBScanModal />
       {/* SIDEBAR */}
       <aside className={`sidebar ${sidebarOpen ? "sidebar-open" : ""}`}>
         <div className="brand">

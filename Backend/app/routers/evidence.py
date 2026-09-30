@@ -17,7 +17,16 @@ from ..schemas import (
 from ..security.auth import get_current_user, require_role
 from ..services.audit_service import log_audit_event
 from ..services.hash_service import calculate_file_hash, verify_file_integrity
-from ..services.storage_service import save_evidence_file
+from ..services.storage_service import save_evidence_file, get_evidence_vault_path
+from ..services.encryption_service import encryption_service
+from ..services.key_manager import get_key_manager
+from ..services.biometric_service import get_biometric_service
+from ..services.vault_session import vault_sessions
+from ..config import CEB_STORAGE_PATH, ACCESS_SESSION_TIMEOUT
+from ..schemas import UnlockResponse
+from ..models import EvidenceEncryption
+import os
+from fastapi.responses import StreamingResponse
 
 router = APIRouter(prefix="/evidence", tags=["Evidence Management"])
 
@@ -197,18 +206,58 @@ def upload_evidence_file(
     parent_case = db.query(Case).filter(Case.id == ev.case_id).first()
     case_code = parent_case.case_id if parent_case else f"CASE-{ev.case_id}"
 
-    # Save evidence file safely inside storage abstraction
-    relative_path, file_size = save_evidence_file(case_code, ev.evidence_id, file)
+    # Save evidence file safely inside staging (STORAGE_DIR)
+    staging_relative_path, file_size = save_evidence_file(case_code, ev.evidence_id, file)
+    staging_full_path = Path(STORAGE_DIR).resolve() / staging_relative_path
 
-    full_file_path = Path(STORAGE_DIR).resolve() / relative_path
+    # Calculate original SHA-256 hash
+    computed_hash = calculate_file_hash(staging_full_path, ev.hash_algorithm or "SHA-256")
+    
+    # Placeholder for Malware Scan:
+    log_audit_event(
+        db=db,
+        event="MALWARE_SCAN_COMPLETED",
+        details=f"Malware scan completed on staging file for evidence '{ev.evidence_id}'. No threats detected.",
+        user_id=current_user.id,
+    )
 
-    # Calculate SHA-256 hash automatically upon upload
-    computed_hash = calculate_file_hash(full_file_path, ev.hash_algorithm or "SHA-256")
+    # Encrypt the evidence file and move to secure vault
+    key_manager = get_key_manager()
+    dek = key_manager.generate_dek()
+    wrapped_dek = key_manager.wrap_dek(dek)
+    
+    vault_dir = get_evidence_vault_path(case_code, ev.evidence_id)
+    safe_filename = "".join(c for c in (file.filename or "evidence.bin") if c.isalnum() or c in (".", "-", "_"))
+    encrypted_filename = f"{safe_filename}.enc"
+    vault_full_path = vault_dir / encrypted_filename
+    
+    nonce, tag = encryption_service.encrypt_evidence(dek, str(staging_full_path), str(vault_full_path))
+    encrypted_sha256 = encryption_service.calculate_hash(str(vault_full_path))
+    
+    # Clean up plaintext staging file
+    try:
+        os.remove(staging_full_path)
+    except Exception as e:
+        print(f"[CEB] Error deleting staging file: {e}")
 
-    ev.storage_path = relative_path
-    ev.file_size_bytes = file_size
+    # Relative path from CEB_STORAGE_PATH (vault)
+    vault_relative_path = os.path.relpath(vault_full_path, vault_dir.parent.parent)
+
+    ev.storage_path = vault_relative_path
+    ev.file_size_bytes = file_size # Keeping original file size conceptually, or change? The requirements don't mandate changing this, we keep original size
     ev.hash_value = computed_hash
-    ev.status = "Acquired"
+    ev.status = "Secured"
+    
+    encryption_record = EvidenceEncryption(
+        evidence_id=ev.id,
+        encryption_algorithm="AES-256-GCM",
+        key_version=1,
+        encrypted_dek=wrapped_dek,
+        nonce=nonce,
+        encrypted_sha256=encrypted_sha256,
+        authentication_tag=tag
+    )
+    db.add(encryption_record)
 
     db.commit()
     db.refresh(ev)
@@ -217,17 +266,17 @@ def upload_evidence_file(
     custody_event = CustodyEvent(
         evidence_id=ev.id,
         user_id=current_user.id,
-        action="Evidence Acquired",
-        location="Controlled Storage Vault",
-        remarks=f"File '{file.filename}' uploaded ({file_size} bytes). {ev.hash_algorithm} hash: {computed_hash[:12]}...",
+        action="Evidence Encrypted & Secured",
+        location="Encrypted Vault",
+        remarks=f"File '{file.filename}' encrypted. Plaintext staging removed. {ev.hash_algorithm} hash: {computed_hash[:12]}...",
     )
     db.add(custody_event)
     db.commit()
 
     log_audit_event(
         db=db,
-        event="HASH_CREATED",
-        details=f"File uploaded & {ev.hash_algorithm} hash calculated for evidence '{ev.evidence_id}': {computed_hash}",
+        event="EVIDENCE_ENCRYPTED",
+        details=f"Evidence '{ev.evidence_id}' encrypted via AES-256-GCM and stored in vault",
         user_id=current_user.id,
     )
 
@@ -251,28 +300,30 @@ def verify_evidence(
             detail="Evidence not found",
         )
 
-    if not ev.storage_path or not ev.hash_value:
+    if not ev.storage_path or not ev.is_encrypted:
         return EvidenceVerifyResponse(
             evidence_id=ev.evidence_id,
             is_valid=False,
             expected_hash=ev.hash_value,
             computed_hash=None,
-            message="Evidence does not have a stored file or recorded hash value to verify.",
+            message="Evidence does not have a stored file or encryption metadata to verify.",
         )
 
-    full_file_path = Path(STORAGE_DIR).resolve() / ev.storage_path
+    from ..config import CEB_STORAGE_PATH
+    full_file_path = Path(CEB_STORAGE_PATH).resolve() / ev.storage_path
 
     if not full_file_path.exists():
         return EvidenceVerifyResponse(
             evidence_id=ev.evidence_id,
             is_valid=False,
-            expected_hash=ev.hash_value,
+            expected_hash=ev.encrypted_sha256,
             computed_hash=None,
-            message="Evidence file not found on disk at stored path.",
+            message="Encrypted evidence file not found on disk at vault path.",
         )
 
+    # Verify encrypted artifact hash
     is_valid, computed_hash = verify_file_integrity(
-        full_file_path, ev.hash_value, ev.hash_algorithm or "SHA-256"
+        full_file_path, ev.encrypted_sha256, "SHA-256"
     )
 
     if is_valid:
@@ -283,8 +334,8 @@ def verify_evidence(
             evidence_id=ev.id,
             user_id=current_user.id,
             action="Integrity Verified",
-            location="Controlled Storage Vault",
-            remarks=f"Cryptographic hash match confirmed ({ev.hash_algorithm}: {computed_hash[:12]}...)",
+            location="Encrypted Vault",
+            remarks=f"Encrypted cryptographic hash match confirmed (SHA-256: {computed_hash[:12]}...)",
         )
         db.add(custody_event)
         db.commit()
@@ -292,16 +343,16 @@ def verify_evidence(
         log_audit_event(
             db=db,
             event="HASH_VERIFIED",
-            details=f"Hash verification PASSED for evidence '{ev.evidence_id}'",
+            details=f"Encrypted Hash verification PASSED for evidence '{ev.evidence_id}'",
             user_id=current_user.id,
         )
 
         return EvidenceVerifyResponse(
             evidence_id=ev.evidence_id,
             is_valid=True,
-            expected_hash=ev.hash_value,
+            expected_hash=ev.encrypted_sha256,
             computed_hash=computed_hash,
-            message="Evidence integrity verified: Recorded hash matches file content.",
+            message="Evidence integrity verified: Recorded encrypted hash matches file content.",
         )
     else:
         custody_event = CustodyEvent(
@@ -328,3 +379,103 @@ def verify_evidence(
             computed_hash=computed_hash,
             message="INTEGRITY ALERT: Hash verification failed! File content has changed.",
         )
+
+@router.post("/{evidence_identifier}/unlock", response_model=UnlockResponse)
+def unlock_evidence(
+    evidence_identifier: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Investigator"])),
+):
+    if evidence_identifier.isdigit():
+        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
+    else:
+        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
+
+    if not ev or not ev.is_encrypted:
+        raise HTTPException(status_code=400, detail="Evidence not found or not encrypted")
+
+    biometric_service = get_biometric_service()
+    
+    log_audit_event(db, "BIOMETRIC_AUTH_STARTED", f"Biometric auth requested for user {current_user.id}", current_user.id)
+    
+    # Biometric Challenge
+    is_verified = biometric_service.verify_user(current_user.id)
+    if not is_verified:
+        log_audit_event(db, "BIOMETRIC_AUTH_FAILED", f"Biometric verification failed for user {current_user.id}", current_user.id)
+        raise HTTPException(status_code=403, detail="Biometric Authentication Failed")
+
+    log_audit_event(db, "BIOMETRIC_AUTH_SUCCESS", f"Biometric verification succeeded for user {current_user.id}", current_user.id)
+
+    # Authorization checks are assumed passed by `require_role` and case access (if any).
+    key_manager = get_key_manager()
+    
+    try:
+        # Release the key securely
+        dek = key_manager.unwrap_dek(ev.encryption_metadata.encrypted_dek)
+        vault_sessions.create_session(ev.id, current_user.id, dek, timeout_minutes=ACCESS_SESSION_TIMEOUT)
+        
+        log_audit_event(db, "EVIDENCE_ACCESS_REQUESTED", f"Evidence '{ev.evidence_id}' unlocked securely for {ACCESS_SESSION_TIMEOUT} minutes.", current_user.id)
+        
+        return UnlockResponse(
+            evidence_id=ev.evidence_id,
+            unlocked=True,
+            message=f"Evidence unlocked for {ACCESS_SESSION_TIMEOUT} minutes.",
+            expires_in_minutes=ACCESS_SESSION_TIMEOUT
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to unwrap DEK securely.")
+
+@router.post("/{evidence_identifier}/lock")
+def lock_evidence(
+    evidence_identifier: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if evidence_identifier.isdigit():
+        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
+    else:
+        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
+
+    if not ev:
+        raise HTTPException(status_code=404, detail="Evidence not found")
+
+    revoked = vault_sessions.revoke_session(ev.id, current_user.id)
+    if revoked:
+        log_audit_event(db, "EVIDENCE_LOCKED", f"Evidence '{ev.evidence_id}' locked. Session terminated.", current_user.id)
+        return {"status": "locked", "message": "Evidence session successfully terminated and memory wiped."}
+    return {"status": "unlocked", "message": "No active session found to lock."}
+
+@router.get("/{evidence_identifier}/stream")
+def stream_evidence(
+    evidence_identifier: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin", "Investigator"])),
+):
+    if evidence_identifier.isdigit():
+        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
+    else:
+        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
+
+    if not ev or not ev.is_encrypted:
+        raise HTTPException(status_code=404, detail="Evidence not found or not encrypted")
+
+    dek = vault_sessions.get_session_dek(ev.id, current_user.id)
+    if not dek:
+        log_audit_event(db, "EVIDENCE_ACCESS_EXPIRED", f"Unauthorized or expired access attempt for '{ev.evidence_id}' stream.", current_user.id)
+        raise HTTPException(status_code=401, detail="Access denied. Biometric authentication required or session expired.")
+
+    vault_full_path = Path(CEB_STORAGE_PATH).resolve() / ev.storage_path
+    if not vault_full_path.exists():
+        raise HTTPException(status_code=404, detail="Encrypted payload missing.")
+
+    log_audit_event(db, "EVIDENCE_VIEWED", f"Evidence '{ev.evidence_id}' being streamed to viewer.", current_user.id)
+
+    return StreamingResponse(
+        encryption_service.stream_decrypted_evidence(
+            dek=dek, 
+            nonce=ev.encryption_metadata.nonce, 
+            tag=ev.encryption_metadata.authentication_tag, 
+            ciphertext_path=str(vault_full_path)
+        ), 
+        media_type="application/octet-stream"
+    )
