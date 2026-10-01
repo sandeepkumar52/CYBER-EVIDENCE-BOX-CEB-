@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import { PackageSearch } from "lucide-react";
 import api from "../services/api";
-import type { CustodyEvent, DashboardStats } from "../types";
+import type { CustodyEvent } from "../types";
 
 export const CustodyPage: React.FC = () => {
   const [custodyLogs, setCustodyLogs] = useState<CustodyEvent[]>([]);

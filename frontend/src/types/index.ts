@@ -100,3 +100,97 @@ export interface DashboardStats {
   recent_custody_events: CustodyEvent[];
   recent_audit_logs: AuditLog[];
 }
+
+// ==========================================
+// USB HARDWARE / SERIAL DEVICES
+// ==========================================
+export type USBDeviceRole = "esp32" | "gps" | "arduino" | "sensor" | "generic";
+export type USBConnectionStatus = "connected" | "disconnected" | "connecting" | "error";
+
+export interface USBDevice {
+  port: string;
+  name: string;
+  role: USBDeviceRole;
+  vid?: string | null;
+  pid?: string | null;
+  serialNumber?: string | null;
+  manufacturer?: string | null;
+  description?: string | null;
+  baudRate: number;
+  status: USBConnectionStatus;
+  isMock: boolean;
+  lastSeen?: string;
+  error?: string | null;
+}
+
+export interface HardwareSubsystemStatus {
+  mode: "hardware" | "mock" | "auto";
+  scanIntervalSeconds: number;
+  totalDevices: number;
+  connectedCount: number;
+  devices: USBDevice[];
+}
+
+export interface SerialDataPacket {
+  port: string;
+  data: string;
+  role?: string;
+  timestamp: string;
+}
+
+// ==========================================
+// USB STORAGE / PENDRIVE MANAGEMENT
+// ==========================================
+export type StorageStatus = "connected" | "mounted" | "unmounted" | "ejecting" | "ejected" | "error";
+
+export interface USBStorageDevice {
+  device: string;
+  name: string;
+  vendor?: string | null;
+  model?: string | null;
+  serialNumber?: string | null;
+  partition?: string | null;
+  mountPoint?: string | null;
+  filesystem?: string | null;
+  totalBytes: number;
+  usedBytes: number;
+  freeBytes: number;
+  mounted: boolean;
+  readOnly: boolean;
+  status: StorageStatus;
+  isMock: boolean;
+  lastSeen?: string;
+  error?: string | null;
+}
+
+export interface StorageSubsystemStatus {
+  totalStorageDevices: number;
+  mountedCount: number;
+  totalBytes: number;
+  usedBytes: number;
+  freeBytes: number;
+  devices: USBStorageDevice[];
+}
+
+export interface StorageFileItem {
+  name: string;
+  type: "file" | "directory";
+  size: number;
+  modified: string;
+}
+
+export interface StorageFilesResponse {
+  path: string;
+  device: string;
+  mountPoint: string;
+  items: StorageFileItem[];
+}
+
+export interface StorageExportResult {
+  status: string;
+  message: string;
+  targetDevice: string;
+  savedPath: string;
+  exportedAt: string;
+  files: string[];
+}

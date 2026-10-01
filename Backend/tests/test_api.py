@@ -2,48 +2,9 @@ import io
 import pytest
 from fastapi.testclient import TestClient
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
-
 from app.main import app
-from app.database import Base, get_db
-from app.models import User
-from app.security.auth import hash_password
-
-SQLALCHEMY_DATABASE_URL = "sqlite:///:memory:"
-
-engine = create_engine(
-    SQLALCHEMY_DATABASE_URL,
-    connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
-)
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-def override_get_db():
-    try:
-        db = TestingSessionLocal()
-        yield db
-    finally:
-        db.close()
-
-app.dependency_overrides[get_db] = override_get_db
 
 client = TestClient(app)
-
-
-@pytest.fixture(autouse=True)
-def setup_database():
-    Base.metadata.create_all(bind=engine)
-    db = TestingSessionLocal()
-    if not db.query(User).filter(User.username == "admin").first():
-        db.add(User(username="admin", role="Admin", hashed_password=hash_password("admin123")))
-    if not db.query(User).filter(User.username == "investigator01").first():
-        db.add(User(username="investigator01", role="Investigator", hashed_password=hash_password("investigator123")))
-    db.commit()
-    db.close()
-    yield
-    Base.metadata.drop_all(bind=engine)
 
 
 def test_health_endpoint():
@@ -178,3 +139,95 @@ def test_duplicate_case_id_rejection():
 
     res2 = client.post("/cases", json=case_payload, headers=headers)
     assert res2.status_code == 409
+
+
+def test_archived_case_filter():
+    login_res = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+
+    case_payload = {
+        "case_id": "CASE-ARCH-001",
+        "case_name": "Archived Test Case",
+    }
+    c_res = client.post("/cases", json=case_payload, headers=headers)
+    assert c_res.status_code == 201
+
+    # Archive it
+    arc_res = client.delete("/cases/CASE-ARCH-001", headers=headers)
+    assert arc_res.status_code == 200
+    assert arc_res.json()["is_archived"] is True
+
+    # Filter with status=Archived
+    filter_res = client.get("/cases?status=Archived", headers=headers)
+    assert filter_res.status_code == 200
+    assert any(c["case_id"] == "CASE-ARCH-001" for c in filter_res.json())
+
+
+def test_evidence_download_and_delete():
+    login_res = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+
+    # Create Case
+    c_res = client.post(
+        "/cases",
+        json={"case_id": "CASE-DL-001", "case_name": "DL Test Case"},
+        headers=headers,
+    )
+    case_pk = c_res.json()["id"]
+
+    # Register evidence
+    ev_res = client.post(
+        "/evidence",
+        json={
+            "evidence_id": "EVID-DL-001",
+            "case_id": case_pk,
+            "evidence_type": "Document",
+        },
+        headers=headers,
+    )
+    assert ev_res.status_code == 201
+
+    # Upload file
+    test_bytes = b"DIGITAL FORENSIC EVIDENCE CONTENT VERIFICATION"
+    files = {"file": ("report.pdf", io.BytesIO(test_bytes), "application/pdf")}
+    up_res = client.post(
+        "/evidence/EVID-DL-001/upload",
+        files=files,
+        headers=headers,
+    )
+    assert up_res.status_code == 200
+
+    # Download file
+    dl_res = client.get("/evidence/EVID-DL-001/download", headers=headers)
+    assert dl_res.status_code == 200
+    assert dl_res.content == test_bytes
+
+    # Delete evidence
+    del_res = client.delete("/evidence/EVID-DL-001", headers=headers)
+    assert del_res.status_code == 200
+
+    # Verify deleted
+    get_res = client.get("/evidence/EVID-DL-001", headers=headers)
+    assert get_res.status_code == 404
+
+
+def test_user_delete_protection():
+    login_res = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+    headers = {"Authorization": f"Bearer {login_res.json()['access_token']}"}
+
+    # Investigator has cases or custody events
+    user_res = client.get("/users", headers=headers)
+    inv_user = next(u for u in user_res.json() if u["username"] == "investigator01")
+
+    # Create case with investigator
+    client.post(
+        "/cases",
+        json={"case_id": "CASE-PROT-001", "case_name": "Protection Test", "created_by": inv_user["id"]},
+        headers=headers,
+    )
+
+    # Attempt to delete user with case should fail with 400
+    del_res = client.delete(f"/users/{inv_user['id']}", headers=headers)
+    assert del_res.status_code == 400
+    assert "associated cases" in del_res.json()["detail"].lower()
+

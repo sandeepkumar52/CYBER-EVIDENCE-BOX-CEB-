@@ -1,6 +1,5 @@
 import React, { useState } from "react";
-import { Folder, File, ShieldAlert, CheckCircle, Search, Save, X, Lock } from "lucide-react";
-import api from "../services/api";
+import { Folder, File, ShieldAlert, CheckCircle, Search, X, Lock } from "lucide-react";
 
 interface UsbFile {
   name: string;
@@ -17,13 +16,13 @@ interface UsbFile {
 
 interface Props {
   deviceInfo: any;
-  mountPoint: string;
+  mountPoint?: string;
   files: UsbFile[];
   onClose: () => void;
   onAcquire: (file: UsbFile, caseId: number) => void;
 }
 
-export const USBScanResultsModal: React.FC<Props> = ({ deviceInfo, mountPoint, files, onClose, onAcquire }) => {
+export const USBScanResultsModal: React.FC<Props> = ({ deviceInfo, files, onClose, onAcquire }) => {
   const [selectedFile, setSelectedFile] = useState<UsbFile | null>(null);
   const [caseId, setCaseId] = useState<string>("");
   
@@ -85,7 +84,7 @@ export const USBScanResultsModal: React.FC<Props> = ({ deviceInfo, mountPoint, f
                         {formatBytes(file.size)} • {file.mime_type}
                       </div>
                     </div>
-                    {isMalware && <ShieldAlert size={14} color="#ef4444" title="Malware Detected" />}
+                    {isMalware && <span title="Malware Detected"><ShieldAlert size={14} color="#ef4444" /></span>}
                   </div>
                 );
               })}

@@ -10,6 +10,13 @@ from ..services.audit_service import log_audit_event
 router = APIRouter(tags=["Chain of Custody"])
 
 
+def _get_evidence_by_identifier(db: Session, evidence_identifier: str) -> Evidence | None:
+    ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
+    if not ev and evidence_identifier.isdigit():
+        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
+    return ev
+
+
 @router.post(
     "/evidence/{evidence_identifier}/custody",
     response_model=CustodyEventResponse,
@@ -21,11 +28,7 @@ def add_custody_event(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Investigator"])),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -71,11 +74,7 @@ def get_custody_history(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -95,6 +94,7 @@ def get_custody_history(
     response_model=list[CustodyEventResponse],
 )
 def get_all_custody_history(
+    skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -102,6 +102,7 @@ def get_all_custody_history(
     return (
         db.query(CustodyEvent)
         .order_by(CustodyEvent.timestamp.desc())
+        .offset(skip)
         .limit(limit)
         .all()
     )

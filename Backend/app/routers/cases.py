@@ -12,6 +12,13 @@ from ..services.audit_service import log_audit_event
 router = APIRouter(prefix="/cases", tags=["Case Management"])
 
 
+def _get_case_by_identifier(db: Session, case_identifier: str) -> Case | None:
+    c = db.query(Case).filter(Case.case_id == case_identifier).first()
+    if not c and case_identifier.isdigit():
+        c = db.query(Case).filter(Case.id == int(case_identifier)).first()
+    return c
+
+
 @router.post("", response_model=CaseResponse, status_code=status.HTTP_201_CREATED)
 def create_case(
     case_in: CaseCreate,
@@ -25,7 +32,11 @@ def create_case(
             detail="Case ID already exists",
         )
 
-    creator_id = case_in.created_by or current_user.id
+    creator_id = current_user.id
+    if case_in.created_by and current_user.role == "Admin":
+        target_user = db.query(User).filter(User.id == case_in.created_by).first()
+        if target_user:
+            creator_id = target_user.id
 
     new_case = Case(
         case_id=case_in.case_id,
@@ -61,11 +72,14 @@ def list_cases(
 ):
     query = db.query(Case)
 
-    if not include_archived:
-        query = query.filter(Case.is_archived == False)
-
-    if status:
+    if status == "Archived":
+        query = query.filter((Case.is_archived == True) | (Case.status == "Archived"))
+    elif status:
         query = query.filter(Case.status == status)
+        if not include_archived:
+            query = query.filter((Case.is_archived == False) | (Case.is_archived.is_(None)))
+    elif not include_archived:
+        query = query.filter((Case.is_archived == False) | (Case.is_archived.is_(None)))
 
     if search:
         search_pattern = f"%{search}%"
@@ -93,12 +107,7 @@ def get_case(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    # Support lookup by case_id string (e.g. CASE-2026-001) or primary key integer
-    if case_identifier.isdigit():
-        c = db.query(Case).filter(Case.id == int(case_identifier)).first()
-    else:
-        c = db.query(Case).filter(Case.case_id == case_identifier).first()
-
+    c = _get_case_by_identifier(db, case_identifier)
     if not c:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -117,11 +126,7 @@ def update_case(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Investigator"])),
 ):
-    if case_identifier.isdigit():
-        c = db.query(Case).filter(Case.id == int(case_identifier)).first()
-    else:
-        c = db.query(Case).filter(Case.case_id == case_identifier).first()
-
+    c = _get_case_by_identifier(db, case_identifier)
     if not c:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -157,19 +162,29 @@ def update_case(
 @router.delete("/{case_identifier}", response_model=CaseResponse)
 def archive_case(
     case_identifier: str,
+    permanent: bool = Query(False, description="Permanently delete case and cascade evidence"),
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin"])),
 ):
-    if case_identifier.isdigit():
-        c = db.query(Case).filter(Case.id == int(case_identifier)).first()
-    else:
-        c = db.query(Case).filter(Case.case_id == case_identifier).first()
-
+    c = _get_case_by_identifier(db, case_identifier)
     if not c:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Case not found",
         )
+
+    if permanent:
+        case_id_str = c.case_id
+        db.delete(c)
+        db.commit()
+
+        log_audit_event(
+            db=db,
+            event="CASE_DELETED",
+            details=f"Case '{case_id_str}' permanently deleted by Admin {current_user.username}",
+            user_id=current_user.id,
+        )
+        return c
 
     c.is_archived = True
     c.status = "Archived"

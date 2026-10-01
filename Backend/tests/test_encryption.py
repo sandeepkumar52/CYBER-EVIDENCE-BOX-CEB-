@@ -1,7 +1,7 @@
 import os
 import pytest
-from ..app.services.encryption_service import encryption_service
-from ..app.services.key_manager import DevelopmentKeyManager
+from app.services.encryption_service import encryption_service
+from app.services.key_manager import DevelopmentKeyManager
 
 def test_encryption_and_decryption_integrity(tmp_path):
     key_manager = DevelopmentKeyManager(key_path=str(tmp_path / "dev_kek"))

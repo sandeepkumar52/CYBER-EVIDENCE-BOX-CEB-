@@ -9,6 +9,7 @@ import {
   PackageSearch,
   ShieldCheck,
   Users,
+  Usb,
   X,
 } from "lucide-react";
 
@@ -30,6 +31,7 @@ import { EvidencePage } from "./pages/EvidencePage";
 import { CustodyPage } from "./pages/CustodyPage";
 import { AuditLogsPage } from "./pages/AuditLogsPage";
 import { UsersPage } from "./pages/UsersPage";
+import { HardwarePage } from "./pages/HardwarePage";
 
 import "./App.css";
 
@@ -154,7 +156,15 @@ const MainApp: React.FC = () => {
             <span>Chain of Custody</span>
           </button>
 
-          <div className="nav-section">SYSTEM & AUDIT</div>
+          <div className="nav-section">HARDWARE & SYSTEM</div>
+
+          <button
+            className={`nav-item ${activePage === "hardware" ? "active" : ""}`}
+            onClick={() => navigateTo("hardware")}
+          >
+            <Usb size={19} />
+            <span>Hardware & USB Storage</span>
+          </button>
 
           <button
             className={`nav-item ${activePage === "audit-logs" ? "active" : ""}`}
@@ -208,6 +218,7 @@ const MainApp: React.FC = () => {
               {activePage === "case-details" && `Case: ${activeParam}`}
               {activePage === "evidence" && "Digital Evidence Registry"}
               {activePage === "custody" && "Chain of Custody"}
+              {activePage === "hardware" && "Hardware & USB Storage Management"}
               {activePage === "audit-logs" && "System Audit Trail"}
               {activePage === "users" && "Investigator & User Accounts"}
             </h2>
@@ -258,6 +269,8 @@ const MainApp: React.FC = () => {
         )}
 
         {activePage === "custody" && <CustodyPage />}
+
+        {activePage === "hardware" && <HardwarePage />}
 
         {activePage === "audit-logs" && <AuditLogsPage />}
 

@@ -1,15 +1,44 @@
+# Virtual Environments
+venv/
+.venv/
 Backend/venv/
+
+# Python Cache & Bytecode
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Environment Variables & Local Secrets
 .env
 .env.*
+.dev_kek
+*.kek
+*.pem
+*.key
+
+# Runtime Databases
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
-storage/
-Backend/storage/
+
+# Runtime Evidence Vault & Mock USB Storage
+/storage/
+/Backend/storage/
+Backend/ceb.db*
+
+# Node / Frontend Build Artifacts
+node_modules/
 frontend/node_modules/
+dist/
 frontend/dist/
+
+# Development Logs & System Files
+*.log
 .vscode/
+.idea/
 .DS_Store
 Thumbs.db

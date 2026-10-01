@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Lock, Unlock, X, ShieldAlert, FileText, Download } from "lucide-react";
+import { Lock, Unlock, X, ShieldAlert, Download } from "lucide-react";
 import api from "../services/api";
 import type { Evidence } from "../types";
 

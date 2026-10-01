@@ -192,6 +192,9 @@ export const DashboardPage: React.FC<Props> = ({ onNavigate, onOpenCreateCase })
               <h4>Evidence Station</h4>
               <p>Hardware & System Interface</p>
             </div>
+            <button className="panel-action" onClick={() => onNavigate("hardware")}>
+              Manage USB & Hardware <ChevronRight size={15} />
+            </button>
           </div>
 
           <div className="hardware-status">

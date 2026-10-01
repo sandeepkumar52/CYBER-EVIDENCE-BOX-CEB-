@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import User
+from ..models import Case, CustodyEvent, User
 from ..schemas import UserCreate, UserResponse, UserUpdate
 from ..security.auth import get_current_user, hash_password, require_role
 from ..services.audit_service import log_audit_event
@@ -114,6 +114,14 @@ def delete_user(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
+        )
+
+    has_cases = db.query(Case).filter(Case.created_by == user_id).first()
+    has_custody = db.query(CustodyEvent).filter(CustodyEvent.user_id == user_id).first()
+    if has_cases or has_custody:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Cannot delete user '{user.username}': user has associated cases or forensic custody records.",
         )
 
     username = user.username

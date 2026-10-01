@@ -106,6 +106,10 @@ export const USBScanModal: React.FC = () => {
     );
   }
 
+  if (!usbEvent) {
+    return null;
+  }
+
   const formatCapacity = (bytes: number) => {
     if (!bytes) return "Unknown Capacity";
     if (typeof bytes === 'string') return bytes; // If backend sent string

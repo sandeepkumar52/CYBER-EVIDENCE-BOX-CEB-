@@ -1,38 +1,54 @@
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+import hashlib
+import logging
+import os
+
+logger = logging.getLogger("ceb.routers.evidence")
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
+from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
-from ..config import STORAGE_DIR
+from ..config import CEB_STORAGE_PATH, STORAGE_DIR, ACCESS_SESSION_TIMEOUT
 from ..database import get_db
-from ..models import Case, CustodyEvent, Evidence, User
+from ..models import Case, CustodyEvent, Evidence, EvidenceEncryption, User
 from ..schemas import (
     EvidenceCreate,
     EvidenceResponse,
     EvidenceUpdate,
     EvidenceVerifyResponse,
+    UnlockResponse,
 )
 from ..security.auth import get_current_user, require_role
 from ..services.audit_service import log_audit_event
-from ..services.hash_service import calculate_file_hash, verify_file_integrity
-from ..services.storage_service import save_evidence_file, get_evidence_vault_path
-from ..services.encryption_service import encryption_service
-from ..services.key_manager import get_key_manager
 from ..services.biometric_service import get_biometric_service
+from ..services.encryption_service import encryption_service
+from ..services.hash_service import calculate_file_hash, verify_file_integrity
+from ..services.key_manager import get_key_manager
+from ..services.storage_service import (
+    delete_evidence_file,
+    get_base_storage_dir,
+    get_evidence_vault_path,
+    get_vault_storage_dir,
+    save_evidence_file,
+)
 from ..services.vault_session import vault_sessions
-from ..config import CEB_STORAGE_PATH, ACCESS_SESSION_TIMEOUT
-from ..schemas import UnlockResponse
-from ..models import EvidenceEncryption
-import os
-from fastapi.responses import StreamingResponse
 
 router = APIRouter(prefix="/evidence", tags=["Evidence Management"])
 
 
+def _get_evidence_by_identifier(db: Session, evidence_identifier: str) -> Evidence | None:
+    ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
+    if not ev and evidence_identifier.isdigit():
+        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
+    return ev
+
+
 @router.post("", response_model=EvidenceResponse, status_code=status.HTTP_201_CREATED)
-def create_evidence(
+def register_evidence(
     evidence_in: EvidenceCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Investigator"])),
@@ -41,37 +57,35 @@ def create_evidence(
     if not case:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Parent case with ID {evidence_in.case_id} not found",
+            detail="Associated case not found",
         )
 
     existing = db.query(Evidence).filter(Evidence.evidence_id == evidence_in.evidence_id).first()
     if existing:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail=f"Evidence ID '{evidence_in.evidence_id}' already exists",
+            detail="Evidence ID already exists",
         )
 
-    ev = Evidence(
+    new_evidence = Evidence(
         evidence_id=evidence_in.evidence_id,
         case_id=evidence_in.case_id,
         evidence_type=evidence_in.evidence_type,
         description=evidence_in.description,
-        device_identifier=evidence_in.device_identifier,
         hash_algorithm=evidence_in.hash_algorithm or "SHA-256",
         hash_value=evidence_in.hash_value,
         status="Registered",
     )
-    db.add(ev)
+    db.add(new_evidence)
     db.commit()
-    db.refresh(ev)
+    db.refresh(new_evidence)
 
-    # Automatically create initial Chain of Custody record
     custody_event = CustodyEvent(
-        evidence_id=ev.id,
+        evidence_id=new_evidence.id,
         user_id=current_user.id,
-        action="Evidence Registered",
-        location="Digital Evidence Station",
-        remarks=f"Evidence registered under case {case.case_id}",
+        action="Registered",
+        location="Intake / Digital Lab",
+        remarks=f"Initial registration of evidence item {new_evidence.evidence_id}",
     )
     db.add(custody_event)
     db.commit()
@@ -79,20 +93,19 @@ def create_evidence(
     log_audit_event(
         db=db,
         event="EVIDENCE_REGISTERED",
-        details=f"Evidence '{ev.evidence_id}' registered under case '{case.case_id}' by {current_user.username}",
+        details=f"Evidence '{new_evidence.evidence_id}' registered by {current_user.username}",
         user_id=current_user.id,
     )
 
-    return ev
+    return new_evidence
 
 
 @router.get("", response_model=list[EvidenceResponse])
-def list_evidence(
-    case_id: Optional[int] = Query(None, description="Filter by case primary key ID"),
-    case_code: Optional[str] = Query(None, description="Filter by case code string (e.g. CASE-2026-001)"),
-    status: Optional[str] = Query(None, description="Filter by evidence status"),
-    evidence_type: Optional[str] = Query(None, description="Filter by evidence type"),
-    search: Optional[str] = Query(None, description="Search evidence ID or description"),
+def get_all_evidence(
+    case_id: Optional[int] = None,
+    evidence_type: Optional[str] = None,
+    status: Optional[str] = None,
+    search: Optional[str] = None,
     skip: int = 0,
     limit: int = 100,
     db: Session = Depends(get_db),
@@ -102,30 +115,25 @@ def list_evidence(
 
     if case_id:
         query = query.filter(Evidence.case_id == case_id)
-    elif case_code:
-        target_case = db.query(Case).filter(Case.case_id == case_code).first()
-        if target_case:
-            query = query.filter(Evidence.case_id == target_case.id)
-        else:
-            return []
-
-    if status:
-        query = query.filter(Evidence.status == status)
-
     if evidence_type:
         query = query.filter(Evidence.evidence_type == evidence_type)
-
+    if status:
+        query = query.filter(Evidence.status == status)
     if search:
         search_pattern = f"%{search}%"
         query = query.filter(
             or_(
                 Evidence.evidence_id.ilike(search_pattern),
                 Evidence.description.ilike(search_pattern),
-                Evidence.device_identifier.ilike(search_pattern),
             )
         )
 
-    return query.order_by(Evidence.created_at.desc()).offset(skip).limit(limit).all()
+    return (
+        query.order_by(Evidence.created_at.desc())
+        .offset(skip)
+        .limit(limit)
+        .all()
+    )
 
 
 @router.get("/{evidence_identifier}", response_model=EvidenceResponse)
@@ -134,11 +142,7 @@ def get_evidence(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -150,27 +154,20 @@ def get_evidence(
 @router.put("/{evidence_identifier}", response_model=EvidenceResponse)
 def update_evidence(
     evidence_identifier: str,
-    ev_in: EvidenceUpdate,
+    evidence_in: EvidenceUpdate,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Investigator"])),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Evidence not found",
         )
 
-    if ev_in.description is not None:
-        ev.description = ev_in.description
-    if ev_in.device_identifier is not None:
-        ev.device_identifier = ev_in.device_identifier
-    if ev_in.status is not None:
-        ev.status = ev_in.status
+    update_data = evidence_in.model_dump(exclude_unset=True)
+    for field, value in update_data.items():
+        setattr(ev, field, value)
 
     db.commit()
     db.refresh(ev)
@@ -192,83 +189,77 @@ def upload_evidence_file(
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Investigator"])),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Evidence not found",
         )
 
-    parent_case = db.query(Case).filter(Case.id == ev.case_id).first()
-    case_code = parent_case.case_id if parent_case else f"CASE-{ev.case_id}"
+    case = db.query(Case).filter(Case.id == ev.case_id).first()
+    case_code = case.case_id if case else "DEFAULT_CASE"
 
-    # Save evidence file safely inside staging (STORAGE_DIR)
-    staging_relative_path, file_size = save_evidence_file(case_code, ev.evidence_id, file)
-    staging_full_path = Path(STORAGE_DIR).resolve() / staging_relative_path
+    # 1. Save unencrypted file to staging
+    rel_path, size = save_evidence_file(case_code, ev.evidence_id, file)
+    staging_file_path = (Path(STORAGE_DIR).resolve() / rel_path).resolve()
 
-    # Calculate original SHA-256 hash
-    computed_hash = calculate_file_hash(staging_full_path, ev.hash_algorithm or "SHA-256")
-    
-    # Placeholder for Malware Scan:
-    log_audit_event(
-        db=db,
-        event="MALWARE_SCAN_COMPLETED",
-        details=f"Malware scan completed on staging file for evidence '{ev.evidence_id}'. No threats detected.",
-        user_id=current_user.id,
-    )
+    # 2. Compute SHA-256 of plaintext
+    plaintext_hash = calculate_file_hash(staging_file_path, "SHA-256")
 
-    # Encrypt the evidence file and move to secure vault
+    # 3. Setup vault directory
+    vault_dir = get_evidence_vault_path(case_code, ev.evidence_id)
+    vault_file_path = vault_dir / "vault.enc"
+
+    # 4. Generate and wrap DEK
     key_manager = get_key_manager()
     dek = key_manager.generate_dek()
     wrapped_dek = key_manager.wrap_dek(dek)
-    
-    vault_dir = get_evidence_vault_path(case_code, ev.evidence_id)
-    safe_filename = "".join(c for c in (file.filename or "evidence.bin") if c.isalnum() or c in (".", "-", "_"))
-    encrypted_filename = f"{safe_filename}.enc"
-    vault_full_path = vault_dir / encrypted_filename
-    
-    nonce, tag = encryption_service.encrypt_evidence(dek, str(staging_full_path), str(vault_full_path))
-    encrypted_sha256 = encryption_service.calculate_hash(str(vault_full_path))
-    
-    # Clean up plaintext staging file
-    try:
-        os.remove(staging_full_path)
-    except Exception as e:
-        print(f"[CEB] Error deleting staging file: {e}")
 
-    # Relative path from CEB_STORAGE_PATH (vault)
-    vault_relative_path = os.path.relpath(vault_full_path, vault_dir.parent.parent)
+    # 5. Encrypt file using AES-256-GCM
+    nonce, tag = encryption_service.encrypt_evidence(dek, str(staging_file_path), str(vault_file_path))
 
-    ev.storage_path = vault_relative_path
-    ev.file_size_bytes = file_size # Keeping original file size conceptually, or change? The requirements don't mandate changing this, we keep original size
-    ev.hash_value = computed_hash
-    ev.status = "Secured"
-    
-    encryption_record = EvidenceEncryption(
-        evidence_id=ev.id,
-        encryption_algorithm="AES-256-GCM",
-        key_version=1,
-        encrypted_dek=wrapped_dek,
-        nonce=nonce,
-        encrypted_sha256=encrypted_sha256,
-        authentication_tag=tag
-    )
-    db.add(encryption_record)
+    # 6. Compute SHA-256 of encrypted ciphertext
+    ciphertext_hash = calculate_file_hash(vault_file_path, "SHA-256")
+
+    # 7. Securely delete plaintext from staging
+    if os.path.exists(staging_file_path):
+        os.remove(staging_file_path)
+
+    # 8. Record in DB
+    rel_vault_path = os.path.relpath(vault_file_path, get_vault_storage_dir()).replace("\\", "/")
+    ev.storage_path = rel_vault_path
+    ev.file_size_bytes = size
+    ev.hash_value = plaintext_hash
+    ev.hash_algorithm = "SHA-256"
+    ev.status = "Acquired"
+
+    # Save or update Encryption metadata
+    if ev.encryption_metadata:
+        ev.encryption_metadata.encrypted_dek = wrapped_dek
+        ev.encryption_metadata.nonce = nonce
+        ev.encryption_metadata.authentication_tag = tag
+        ev.encryption_metadata.encrypted_sha256 = ciphertext_hash
+        ev.encryption_metadata.encrypted_at = datetime.now(timezone.utc)
+    else:
+        encryption_meta = EvidenceEncryption(
+            evidence_id=ev.id,
+            encryption_algorithm="AES-256-GCM",
+            encrypted_dek=wrapped_dek,
+            nonce=nonce,
+            authentication_tag=tag,
+            encrypted_sha256=ciphertext_hash
+        )
+        db.add(encryption_meta)
 
     db.commit()
     db.refresh(ev)
 
-    # Log chain of custody event
     custody_event = CustodyEvent(
         evidence_id=ev.id,
         user_id=current_user.id,
-        action="Evidence Encrypted & Secured",
-        location="Encrypted Vault",
-        remarks=f"File '{file.filename}' encrypted. Plaintext staging removed. {ev.hash_algorithm} hash: {computed_hash[:12]}...",
+        action="File Encrypted to Vault",
+        location="Digital Evidence Locker",
+        remarks=f"Payload encrypted via AES-256-GCM. Plaintext SHA-256: {plaintext_hash[:12]}..., Ciphertext SHA-256: {ciphertext_hash[:12]}...",
     )
     db.add(custody_event)
     db.commit()
@@ -283,47 +274,268 @@ def upload_evidence_file(
     return ev
 
 
-@router.post("/{evidence_identifier}/verify", response_model=EvidenceVerifyResponse)
-def verify_evidence(
+@router.get("/{evidence_identifier}/download")
+def download_evidence_file(
     evidence_identifier: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Evidence not found",
         )
 
-    if not ev.storage_path or not ev.is_encrypted:
+    if not ev.storage_path:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No file stored for this evidence",
+        )
+
+    # If encrypted, decrypt on the fly for authorized user
+    if ev.is_encrypted and ev.encryption_metadata:
+        key_manager = get_key_manager()
+        try:
+            dek = key_manager.unwrap_dek(ev.encryption_metadata.encrypted_dek)
+        except Exception:
+            dek = vault_sessions.get_session_dek(ev.id, current_user.id)
+
+        if not dek:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Access denied. Unable to decrypt vault payload.",
+            )
+
+        vault_full_path = (Path(CEB_STORAGE_PATH).resolve() / ev.storage_path).resolve()
+        if not vault_full_path.is_file():
+            raise HTTPException(status_code=404, detail="Encrypted payload missing on disk")
+
+        log_audit_event(db, "EVIDENCE_DOWNLOADED", f"Evidence '{ev.evidence_id}' decrypted and downloaded by {current_user.username}", current_user.id)
+
+        filename = ev.description or f"{ev.evidence_id}.bin"
+        return StreamingResponse(
+            encryption_service.stream_decrypted_evidence(
+                dek=dek,
+                nonce=ev.encryption_metadata.nonce,
+                tag=ev.encryption_metadata.authentication_tag,
+                ciphertext_path=str(vault_full_path)
+            ),
+            media_type="application/octet-stream",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        )
+
+    # Unencrypted fallback file
+    full_file_path = (get_base_storage_dir() / ev.storage_path).resolve()
+    if not full_file_path.is_file():
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Evidence file not found on disk",
+        )
+
+    return FileResponse(
+        path=str(full_file_path),
+        filename=full_file_path.name,
+        media_type="application/octet-stream",
+    )
+
+
+@router.delete("/{evidence_identifier}", status_code=status.HTTP_200_OK)
+def delete_evidence(
+    evidence_identifier: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(require_role(["Admin"])),
+):
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
+    if not ev:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Evidence not found",
+        )
+
+    evidence_id_str = ev.evidence_id
+    if ev.storage_path:
+        if ev.is_encrypted:
+            try:
+                vpath = (get_vault_storage_dir() / ev.storage_path).resolve()
+                if vpath.is_file():
+                    vpath.unlink()
+                    parent = vpath.parent
+                    if parent != get_vault_storage_dir() and not any(parent.iterdir()):
+                        parent.rmdir()
+            except Exception as e:
+                print(f"[CEB Vault] Deletion note: {e}")
+        else:
+            delete_evidence_file(ev.storage_path)
+
+    db.delete(ev)
+    db.commit()
+
+    log_audit_event(
+        db=db,
+        event="EVIDENCE_DELETED",
+        details=f"Evidence '{evidence_id_str}' deleted by Admin {current_user.username}",
+        user_id=current_user.id,
+    )
+
+    return {"message": f"Evidence '{evidence_id_str}' deleted successfully"}
+
+
+@router.post("/{evidence_identifier}/verify", response_model=EvidenceVerifyResponse)
+def verify_evidence(
+    evidence_identifier: str,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
+    if not ev:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Evidence not found",
+        )
+
+    if not ev.storage_path:
         return EvidenceVerifyResponse(
             evidence_id=ev.evidence_id,
             is_valid=False,
             expected_hash=ev.hash_value,
             computed_hash=None,
-            message="Evidence does not have a stored file or encryption metadata to verify.",
+            message="Evidence does not have a stored file to verify.",
         )
 
-    from ..config import CEB_STORAGE_PATH
-    full_file_path = Path(CEB_STORAGE_PATH).resolve() / ev.storage_path
+    # 1. Handle Encrypted Vault Evidence
+    if ev.is_encrypted and ev.encryption_metadata:
+        full_file_path = (Path(CEB_STORAGE_PATH).resolve() / ev.storage_path).resolve()
+        if not full_file_path.is_file():
+            return EvidenceVerifyResponse(
+                evidence_id=ev.evidence_id,
+                is_valid=False,
+                expected_hash=ev.hash_value,
+                computed_hash=None,
+                message="Encrypted evidence file not found on disk at vault path.",
+            )
 
-    if not full_file_path.exists():
+        # Verify encrypted ciphertext integrity
+        expected_cipher_hash = ev.encryption_metadata.encrypted_sha256 or ev.encrypted_sha256
+        cipher_valid, computed_cipher_hash = verify_file_integrity(
+            full_file_path, expected_cipher_hash, "SHA-256"
+        )
+        if not cipher_valid:
+            custody_event = CustodyEvent(
+                evidence_id=ev.id,
+                user_id=current_user.id,
+                action="Integrity Verification Failed",
+                location="Controlled Storage Vault",
+                remarks=f"CRITICAL: Ciphertext hash mismatch! Expected {expected_cipher_hash[:12] if expected_cipher_hash else 'N/A'}, computed {computed_cipher_hash[:12]}",
+            )
+            db.add(custody_event)
+            db.commit()
+
+            log_audit_event(
+                db=db,
+                event="HASH_MISMATCH_DETECTED",
+                details=f"Ciphertext hash verification FAILED for evidence '{ev.evidence_id}'. Expected {expected_cipher_hash}, got {computed_cipher_hash}",
+                user_id=current_user.id,
+            )
+            return EvidenceVerifyResponse(
+                evidence_id=ev.evidence_id,
+                is_valid=False,
+                expected_hash=ev.hash_value,
+                computed_hash=computed_cipher_hash,
+                message="INTEGRITY ALERT: Vault ciphertext hash verification failed! File content has changed.",
+            )
+
+        # Verify decrypted plaintext hash against original acquisition hash
+        try:
+            key_mgr = get_key_manager()
+            dek = key_mgr.unwrap_dek(ev.encryption_metadata.encrypted_dek)
+            hasher = hashlib.sha256()
+            for chunk in encryption_service.stream_decrypted_evidence(
+                dek=dek,
+                nonce=ev.encryption_metadata.nonce,
+                tag=ev.encryption_metadata.authentication_tag,
+                ciphertext_path=str(full_file_path),
+            ):
+                hasher.update(chunk)
+            computed_plaintext_hash = hasher.hexdigest().lower()
+            expected_plaintext_hash = (ev.hash_value or "").strip().lower()
+
+            if computed_plaintext_hash == expected_plaintext_hash:
+                ev.status = "Verified"
+                db.commit()
+
+                custody_event = CustodyEvent(
+                    evidence_id=ev.id,
+                    user_id=current_user.id,
+                    action="Integrity Verified",
+                    location="Encrypted Vault",
+                    remarks=f"Cryptographic hash match confirmed (SHA-256: {computed_plaintext_hash[:12]}...)",
+                )
+                db.add(custody_event)
+                db.commit()
+
+                log_audit_event(
+                    db=db,
+                    event="HASH_VERIFIED",
+                    details=f"Decrypted plaintext hash verification PASSED for evidence '{ev.evidence_id}'",
+                    user_id=current_user.id,
+                )
+
+                return EvidenceVerifyResponse(
+                    evidence_id=ev.evidence_id,
+                    is_valid=True,
+                    expected_hash=ev.hash_value,
+                    computed_hash=computed_plaintext_hash,
+                    message="Evidence integrity verified: Vault ciphertext and decrypted plaintext SHA-256 match recorded forensic hashes.",
+                )
+            else:
+                custody_event = CustodyEvent(
+                    evidence_id=ev.id,
+                    user_id=current_user.id,
+                    action="Integrity Verification Failed",
+                    location="Controlled Storage Vault",
+                    remarks=f"CRITICAL: Plaintext hash mismatch! Expected {expected_plaintext_hash[:12]}, computed {computed_plaintext_hash[:12]}",
+                )
+                db.add(custody_event)
+                db.commit()
+
+                log_audit_event(
+                    db=db,
+                    event="HASH_MISMATCH_DETECTED",
+                    details=f"Decrypted plaintext hash verification FAILED for evidence '{ev.evidence_id}'. Expected {expected_plaintext_hash}, got {computed_plaintext_hash}",
+                    user_id=current_user.id,
+                )
+
+                return EvidenceVerifyResponse(
+                    evidence_id=ev.evidence_id,
+                    is_valid=False,
+                    expected_hash=ev.hash_value,
+                    computed_hash=computed_plaintext_hash,
+                    message="INTEGRITY ALERT: Decrypted plaintext hash verification failed! Original content modified.",
+                )
+        except Exception as e:
+            logger.error(f"Error during decrypted verification of {ev.evidence_id}: {e}")
+            return EvidenceVerifyResponse(
+                evidence_id=ev.evidence_id,
+                is_valid=False,
+                expected_hash=ev.hash_value,
+                computed_hash=None,
+                message=f"Decryption verification error: {str(e)}",
+            )
+
+    # 2. Handle Unencrypted Storage Evidence
+    unenc_file_path = (get_base_storage_dir() / ev.storage_path).resolve()
+    if not unenc_file_path.is_file():
         return EvidenceVerifyResponse(
             evidence_id=ev.evidence_id,
             is_valid=False,
-            expected_hash=ev.encrypted_sha256,
+            expected_hash=ev.hash_value,
             computed_hash=None,
-            message="Encrypted evidence file not found on disk at vault path.",
+            message="Evidence file not found on disk at storage path.",
         )
 
-    # Verify encrypted artifact hash
     is_valid, computed_hash = verify_file_integrity(
-        full_file_path, ev.encrypted_sha256, "SHA-256"
+        unenc_file_path, ev.hash_value or "", ev.hash_algorithm or "SHA-256"
     )
 
     if is_valid:
@@ -334,8 +546,8 @@ def verify_evidence(
             evidence_id=ev.id,
             user_id=current_user.id,
             action="Integrity Verified",
-            location="Encrypted Vault",
-            remarks=f"Encrypted cryptographic hash match confirmed (SHA-256: {computed_hash[:12]}...)",
+            location="Storage Locker",
+            remarks=f"Cryptographic hash match confirmed (SHA-256: {computed_hash[:12]}...)",
         )
         db.add(custody_event)
         db.commit()
@@ -343,24 +555,24 @@ def verify_evidence(
         log_audit_event(
             db=db,
             event="HASH_VERIFIED",
-            details=f"Encrypted Hash verification PASSED for evidence '{ev.evidence_id}'",
+            details=f"Hash verification PASSED for evidence '{ev.evidence_id}'",
             user_id=current_user.id,
         )
 
         return EvidenceVerifyResponse(
             evidence_id=ev.evidence_id,
             is_valid=True,
-            expected_hash=ev.encrypted_sha256,
+            expected_hash=ev.hash_value,
             computed_hash=computed_hash,
-            message="Evidence integrity verified: Recorded encrypted hash matches file content.",
+            message="Evidence integrity verified: Recorded SHA-256 matches file content.",
         )
     else:
         custody_event = CustodyEvent(
             evidence_id=ev.id,
             user_id=current_user.id,
             action="Integrity Verification Failed",
-            location="Controlled Storage Vault",
-            remarks=f"CRITICAL: Hash mismatch! Expected {ev.hash_value[:12]}, computed {computed_hash[:12]}",
+            location="Storage Locker",
+            remarks=f"CRITICAL: Hash mismatch! Expected {ev.hash_value[:12] if ev.hash_value else 'N/A'}, computed {computed_hash[:12]}",
         )
         db.add(custody_event)
         db.commit()
@@ -380,24 +592,21 @@ def verify_evidence(
             message="INTEGRITY ALERT: Hash verification failed! File content has changed.",
         )
 
+
 @router.post("/{evidence_identifier}/unlock", response_model=UnlockResponse)
 def unlock_evidence(
     evidence_identifier: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Investigator"])),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev or not ev.is_encrypted:
         raise HTTPException(status_code=400, detail="Evidence not found or not encrypted")
 
     biometric_service = get_biometric_service()
-    
+
     log_audit_event(db, "BIOMETRIC_AUTH_STARTED", f"Biometric auth requested for user {current_user.id}", current_user.id)
-    
+
     # Biometric Challenge
     is_verified = biometric_service.verify_user(current_user.id)
     if not is_verified:
@@ -406,16 +615,14 @@ def unlock_evidence(
 
     log_audit_event(db, "BIOMETRIC_AUTH_SUCCESS", f"Biometric verification succeeded for user {current_user.id}", current_user.id)
 
-    # Authorization checks are assumed passed by `require_role` and case access (if any).
     key_manager = get_key_manager()
-    
+
     try:
-        # Release the key securely
         dek = key_manager.unwrap_dek(ev.encryption_metadata.encrypted_dek)
         vault_sessions.create_session(ev.id, current_user.id, dek, timeout_minutes=ACCESS_SESSION_TIMEOUT)
-        
+
         log_audit_event(db, "EVIDENCE_ACCESS_REQUESTED", f"Evidence '{ev.evidence_id}' unlocked securely for {ACCESS_SESSION_TIMEOUT} minutes.", current_user.id)
-        
+
         return UnlockResponse(
             evidence_id=ev.evidence_id,
             unlocked=True,
@@ -425,17 +632,14 @@ def unlock_evidence(
     except Exception as e:
         raise HTTPException(status_code=500, detail="Failed to unwrap DEK securely.")
 
+
 @router.post("/{evidence_identifier}/lock")
 def lock_evidence(
     evidence_identifier: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev:
         raise HTTPException(status_code=404, detail="Evidence not found")
 
@@ -445,17 +649,14 @@ def lock_evidence(
         return {"status": "locked", "message": "Evidence session successfully terminated and memory wiped."}
     return {"status": "unlocked", "message": "No active session found to lock."}
 
+
 @router.get("/{evidence_identifier}/stream")
 def stream_evidence(
     evidence_identifier: str,
     db: Session = Depends(get_db),
     current_user: User = Depends(require_role(["Admin", "Investigator"])),
 ):
-    if evidence_identifier.isdigit():
-        ev = db.query(Evidence).filter(Evidence.id == int(evidence_identifier)).first()
-    else:
-        ev = db.query(Evidence).filter(Evidence.evidence_id == evidence_identifier).first()
-
+    ev = _get_evidence_by_identifier(db, evidence_identifier)
     if not ev or not ev.is_encrypted:
         raise HTTPException(status_code=404, detail="Evidence not found or not encrypted")
 
@@ -472,10 +673,10 @@ def stream_evidence(
 
     return StreamingResponse(
         encryption_service.stream_decrypted_evidence(
-            dek=dek, 
-            nonce=ev.encryption_metadata.nonce, 
-            tag=ev.encryption_metadata.authentication_tag, 
+            dek=dek,
+            nonce=ev.encryption_metadata.nonce,
+            tag=ev.encryption_metadata.authentication_tag,
             ciphertext_path=str(vault_full_path)
-        ), 
+        ),
         media_type="application/octet-stream"
     )

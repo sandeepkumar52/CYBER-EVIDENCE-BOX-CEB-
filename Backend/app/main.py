@@ -1,5 +1,7 @@
+import asyncio
+import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
@@ -7,11 +9,15 @@ from sqlalchemy.orm import Session
 from .config import CORS_ORIGINS
 from .database import Base, engine, SessionLocal
 from .models import User
-from .routers import audit, auth, cases, custody, dashboard, evidence, users, hardware
+from .routers import audit, auth, cases, custody, dashboard, evidence, hardware, storage, users
 from .security.auth import hash_password, verify_password
 from .services.usb_service import usb_service
+from .hardware.usb.usb_manager import usb_manager
+from .hardware.usb.usb_events import hardware_events
+from .hardware.storage.storage_manager import storage_manager
 from .websocket_manager import ws_manager
-from fastapi import WebSocket, WebSocketDisconnect
+
+logger = logging.getLogger("ceb.main")
 
 
 def init_db():
@@ -80,15 +86,44 @@ init_db()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+
+    # Pass the running event loop to the hardware events dispatcher
+    hardware_events.set_loop(asyncio.get_running_loop())
+
+    # Start forensic USB monitor
     usb_service.start_monitoring()
+
+    # Start USB serial and storage managers
+    try:
+        await usb_manager.start()
+    except Exception as e:
+        logger.error(f"Error starting USB serial manager: {e}")
+
+    try:
+        await storage_manager.start()
+    except Exception as e:
+        logger.error(f"Error starting USB storage manager: {e}")
+
     yield
+
+    # Clean shutdown
+    try:
+        await storage_manager.stop()
+    except Exception as e:
+        logger.debug(f"Error stopping storage manager: {e}")
+
+    try:
+        await usb_manager.stop()
+    except Exception as e:
+        logger.debug(f"Error stopping USB manager: {e}")
+
     usb_service.stop_monitoring()
 
 
 app = FastAPI(
     title="Cyber Evidence Box (CEB) API",
-    description="Digital Forensic Evidence Management Platform Backend API",
-    version="0.2.0",
+    description="Digital Forensic Evidence Management Platform Backend API with Integrated USB Subsystem",
+    version="0.3.0",
     lifespan=lifespan,
 )
 
@@ -110,6 +145,9 @@ app.include_router(custody.router)
 app.include_router(audit.router)
 app.include_router(dashboard.router)
 app.include_router(hardware.router)
+app.include_router(hardware.router, prefix="/api")
+app.include_router(storage.router)
+app.include_router(storage.router, prefix="/api")
 
 
 @app.get("/", tags=["System"])
@@ -117,7 +155,7 @@ def root():
     return {
         "message": "Cyber Evidence Box (CEB) API",
         "status": "online",
-        "version": "0.2.0",
+        "version": "0.3.0",
         "docs": "/docs",
     }
 
@@ -129,12 +167,17 @@ def health_check():
         "system": "Cyber Evidence Box",
     }
 
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await ws_manager.connect(websocket)
     try:
         while True:
-            # We don't expect messages from the client yet, just keep connection open
-            await websocket.receive_text()
+            # Keep connection alive & handle incoming pings
+            msg = await websocket.receive_text()
+            if msg == "ping":
+                await websocket.send_text("pong")
     except WebSocketDisconnect:
+        ws_manager.disconnect(websocket)
+    except Exception:
         ws_manager.disconnect(websocket)
