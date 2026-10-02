@@ -1,0 +1,11 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Cyber Evidence Box
+GenericName=Forensic Acquisition Station
+Comment=One-Click Launcher for Cyber Evidence Box (CEB) Frontend and Backend
+Exec=bash -c 'SCRIPT_DIR="$(cd "$(dirname "%k")" 2>/dev/null || pwd)"; if [ -f "$SCRIPT_DIR/start-ceb.sh" ]; then cd "$SCRIPT_DIR"; elif [ -f "./start-ceb.sh" ]; then cd .; fi; ./start-ceb.sh; echo "Press Enter to close..."; read -r'
+Icon=security-high
+Terminal=true
+Categories=Utility;System;Security;
+StartupNotify=true

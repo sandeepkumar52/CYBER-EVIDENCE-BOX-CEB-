@@ -1,0 +1,32 @@
+[Unit]
+Description=Cyber Evidence Box (CEB) Appliance Auto-Start Service
+After=network-online.target local-fs.target systemd-udevd.service
+Wants=network-online.target systemd-udevd.service
+
+[Service]
+Type=forking
+# Replace user/group if running under another account (e.g., pi, cebadmin)
+User=pi
+Group=pi
+
+# Update WorkingDirectory to match your actual SSD mount path if different
+WorkingDirectory=/media/pi/CEB/CYBER-EVIDENCE-BOX-CEB--main
+Environment="PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="HARDWARE_MODE=auto"
+Environment="STORAGE_MODE=auto"
+
+# Run the project launcher and stop scripts
+ExecStart=/bin/bash -c 'cd "$PWD" && ./start-ceb.sh'
+ExecStop=/bin/bash -c 'cd "$PWD" && ./stop-ceb.sh'
+
+Restart=on-failure
+RestartSec=5
+KillMode=mixed
+TimeoutSec=60
+RemainAfterExit=yes
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
