@@ -48,7 +48,8 @@ class AcquireFileRequest(BaseModel):
 # Pydantic Schemas for Serial Hardware USB Requests
 # ==========================================
 class USBConnectRequest(BaseModel):
-    device_path: str = Field(..., alias="devicePath", description="Path of USB/Serial device, e.g. /dev/ttyUSB0 or COM3")
+    device_path: Optional[str] = Field(None, alias="devicePath", description="Path of USB/Serial device, e.g. /dev/ttyUSB0 or COM3")
+    port: Optional[str] = Field(None, description="Port alias")
     baud_rate: Optional[int] = Field(None, alias="baudRate", description="Serial baud rate, e.g. 115200 or 9600")
     data_bits: Optional[int] = Field(8, alias="dataBits", ge=5, le=8)
     stop_bits: Optional[float] = Field(1, alias="stopBits")
@@ -57,18 +58,29 @@ class USBConnectRequest(BaseModel):
 
     model_config = ConfigDict(populate_by_name=True)
 
+    def get_path(self) -> str:
+        return self.device_path or self.port or ""
+
 
 class USBDisconnectRequest(BaseModel):
-    device_path: str = Field(..., alias="devicePath", description="Path of USB device to disconnect")
+    device_path: Optional[str] = Field(None, alias="devicePath", description="Path of USB device to disconnect")
+    port: Optional[str] = Field(None, description="Port alias")
 
     model_config = ConfigDict(populate_by_name=True)
+
+    def get_path(self) -> str:
+        return self.device_path or self.port or ""
 
 
 class USBWriteRequest(BaseModel):
-    device_path: str = Field(..., alias="devicePath", description="Path of connected serial device")
+    device_path: Optional[str] = Field(None, alias="devicePath", description="Path of connected serial device")
+    port: Optional[str] = Field(None, description="Port alias")
     data: str = Field(..., max_length=4096, description="Data string or command payload to transmit")
 
     model_config = ConfigDict(populate_by_name=True)
+
+    def get_path(self) -> str:
+        return self.device_path or self.port or ""
 
 
 class MockDeviceToggleRequest(BaseModel):
@@ -248,15 +260,16 @@ def connect_usb_device(
     """
     Connect to a selected USB/serial device with configurable parameters.
     """
-    if not is_valid_device_path(payload.device_path):
+    target_path = payload.get_path()
+    if not is_valid_device_path(target_path):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid device path format: '{payload.device_path}'",
+            detail=f"Invalid device path format: '{target_path}'",
         )
 
     try:
         success = usb_manager.connect_device(
-            device_path=payload.device_path,
+            device_path=target_path,
             baud_rate=payload.baud_rate,
             data_bits=payload.data_bits or 8,
             stop_bits=int(payload.stop_bits or 1),
@@ -266,17 +279,18 @@ def connect_usb_device(
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to establish serial connection to {payload.device_path}",
+                detail=f"Failed to establish serial connection to {target_path}",
             )
         return {
             "status": "connected",
-            "devicePath": payload.device_path,
-            "message": f"Successfully connected to {payload.device_path}",
+            "devicePath": target_path,
+            "port": target_path,
+            "message": f"Successfully connected to {target_path}",
         }
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
-        logger.error(f"Error connecting to USB device {payload.device_path}: {e}")
+        logger.error(f"Error connecting to USB device {target_path}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
@@ -288,21 +302,23 @@ def disconnect_usb_device(
     """
     Disconnect from an active USB/serial device.
     """
-    if not is_valid_device_path(payload.device_path):
+    target_path = payload.get_path()
+    if not is_valid_device_path(target_path):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid device path format: '{payload.device_path}'",
+            detail=f"Invalid device path format: '{target_path}'",
         )
 
     try:
-        usb_manager.disconnect_device(payload.device_path)
+        usb_manager.disconnect_device(target_path)
         return {
             "status": "disconnected",
-            "devicePath": payload.device_path,
-            "message": f"Successfully disconnected from {payload.device_path}",
+            "devicePath": target_path,
+            "port": target_path,
+            "message": f"Successfully disconnected from {target_path}",
         }
     except Exception as e:
-        logger.error(f"Error disconnecting USB device {payload.device_path}: {e}")
+        logger.error(f"Error disconnecting USB device {target_path}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
@@ -314,51 +330,57 @@ def write_usb_device(
     """
     Send data or commands to a connected serial USB device.
     """
-    if not is_valid_device_path(payload.device_path):
+    target_path = payload.get_path()
+    if not is_valid_device_path(target_path):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid device path format: '{payload.device_path}'",
+            detail=f"Invalid device path format: '{target_path}'",
         )
 
     try:
-        success = usb_manager.write_to_device(payload.device_path, payload.data)
+        success = usb_manager.write_to_device(target_path, payload.data)
         if not success:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Write failed to {payload.device_path}",
+                detail=f"Write failed to {target_path}",
             )
         return {
             "status": "written",
-            "devicePath": payload.device_path,
+            "devicePath": target_path,
+            "port": target_path,
             "bytesSent": len(payload.data.encode("utf-8")),
+            "bytesWritten": len(payload.data.encode("utf-8")),
         }
     except RuntimeError as re:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(re))
     except ValueError as ve:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ve))
     except Exception as e:
-        logger.error(f"Error writing to USB device {payload.device_path}: {e}")
+        logger.error(f"Error writing to USB device {target_path}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.get("/usb/read")
 def read_usb_device(
-    device_path: str = Query(..., alias="devicePath", description="Path of connected device"),
+    device_path: Optional[str] = Query(None, alias="devicePath", description="Path of connected device"),
+    port: Optional[str] = Query(None, description="Port alias"),
     limit: int = Query(50, ge=1, le=200, description="Max lines of buffer to return"),
     current_user: Optional[User] = Depends(get_current_user),
 ):
     """
     Return recently received data buffer lines from a connected device.
     """
-    if not is_valid_device_path(device_path):
+    target_path = device_path or port or ""
+    if not is_valid_device_path(target_path):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid device path format: '{device_path}'",
+            detail=f"Invalid device path format: '{target_path}'",
         )
 
-    lines = usb_manager.read_from_device(device_path, limit=limit)
+    lines = usb_manager.read_from_device(target_path, limit=limit)
     return {
-        "devicePath": device_path,
+        "devicePath": target_path,
+        "port": target_path,
         "lines": lines,
         "count": len(lines),
     }

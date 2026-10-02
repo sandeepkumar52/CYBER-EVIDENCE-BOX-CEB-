@@ -1,48 +1,65 @@
 import React, { useEffect, useState } from "react";
 import { Usb, X, Play } from "lucide-react";
+import { USBScanResultsModal } from "./USBScanResultsModal";
+import api from "../services/api";
 
 interface UsbEvent {
   event: string;
   device_id: string;
-  vendor: string;
-  model: string;
-  capacity: number;
+  vendor?: string;
+  model?: string;
+  capacity?: number | string;
 }
-
-import { USBScanResultsModal } from "./USBScanResultsModal";
-import api from "../services/api";
 
 export const USBScanModal: React.FC = () => {
   const [usbEvent, setUsbEvent] = useState<UsbEvent | null>(null);
   const [isScanning, setIsScanning] = useState(false);
-  const [scanResults, setScanResults] = useState<{ mountPoint: string, files: any[] } | null>(null);
+  const [scanResults, setScanResults] = useState<{ mountPoint: string; files: any[] } | null>(null);
 
   useEffect(() => {
-    // Determine ws protocol based on http/https
     const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    // If we're on localhost frontend (e.g. 5173), we assume backend is on 8000
-    const backendHost = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" 
-                        ? "127.0.0.1:8000" 
-                        : window.location.host; // fallback if served from same origin
+    const host = window.location.hostname || "127.0.0.1";
+    const wsUrl = `${protocol}//${host}:8000/ws`;
     
-    const ws = new WebSocket(`${protocol}//${backendHost}/ws`);
+    let ws: WebSocket | null = null;
+    try {
+      ws = new WebSocket(wsUrl);
 
-    ws.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.event === "usb_connected") {
-          setUsbEvent(data as UsbEvent);
-        } else if (data.event === "usb_removed") {
-          // Close modal if the device is removed
-          setUsbEvent(null);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data && (data.event === "usb_connected" || data.event === "storage:connected")) {
+            const devObj = data.device || data;
+            setUsbEvent({
+              event: data.event,
+              device_id: devObj.device_id || devObj.device || devObj.devicePath || "/dev/sda1",
+              vendor: devObj.vendor || devObj.manufacturer || "USB Storage",
+              model: devObj.model || devObj.name || devObj.product || "Removable Drive",
+              capacity: devObj.capacity || devObj.totalBytes || devObj.total_bytes || "Unknown",
+            });
+          } else if (data && (data.event === "usb_removed" || data.event === "storage:removed")) {
+            setUsbEvent(null);
+          }
+        } catch (e) {
+          console.error("[USBScanModal] Failed to parse websocket message:", e);
         }
-      } catch (e) {
-        console.error("Failed to parse websocket message", e);
-      }
-    };
+      };
+
+      ws.onerror = () => {
+        // Silently handle WS fallback
+      };
+    } catch {
+      // Ignored
+    }
 
     return () => {
-      ws.close();
+      if (ws) {
+        try {
+          ws.close();
+        } catch {
+          // Ignored
+        }
+      }
     };
   }, []);
 
@@ -54,8 +71,8 @@ export const USBScanModal: React.FC = () => {
     try {
       const response = await api.post("/hardware/usb/scan", { device_id: usbEvent.device_id });
       setScanResults({
-        mountPoint: response.data.mount_point,
-        files: response.data.files
+        mountPoint: response.data?.mount_point || "",
+        files: Array.isArray(response.data?.files) ? response.data.files : [],
       });
     } catch (e: any) {
       alert("Failed to scan USB: " + (e.response?.data?.detail || e.message));
@@ -74,7 +91,7 @@ export const USBScanModal: React.FC = () => {
         relative_path: file.relative_path,
         sha256: file.sha256,
         file_size: file.size,
-        mime_type: file.mime_type
+        mime_type: file.mime_type,
       });
       alert(`Evidence securely encrypted into the vault!`);
     } catch (e: any) {
@@ -83,7 +100,7 @@ export const USBScanModal: React.FC = () => {
   };
 
   const handleCloseResults = async () => {
-    if (scanResults) {
+    if (scanResults?.mountPoint) {
       try {
         await api.post(`/hardware/usb/unmount?mount_point=${encodeURIComponent(scanResults.mountPoint)}`);
       } catch (e) {
@@ -99,7 +116,7 @@ export const USBScanModal: React.FC = () => {
       <USBScanResultsModal 
         deviceInfo={usbEvent} 
         mountPoint={scanResults.mountPoint}
-        files={scanResults.files}
+        files={scanResults.files || []}
         onClose={handleCloseResults}
         onAcquire={handleAcquire}
       />
@@ -110,10 +127,11 @@ export const USBScanModal: React.FC = () => {
     return null;
   }
 
-  const formatCapacity = (bytes: number) => {
+  const formatCapacity = (bytes?: any) => {
     if (!bytes) return "Unknown Capacity";
-    if (typeof bytes === 'string') return bytes; // If backend sent string
-    const gb = (bytes / (1000 * 1000 * 1000)).toFixed(1);
+    const num = typeof bytes === "number" ? bytes : parseFloat(String(bytes));
+    if (isNaN(num) || num <= 0) return typeof bytes === "string" ? bytes : "Unknown Capacity";
+    const gb = (num / (1000 * 1000 * 1000)).toFixed(1);
     return `${gb} GB`;
   };
 
@@ -131,7 +149,7 @@ export const USBScanModal: React.FC = () => {
             <Usb size={64} />
           </div>
           <h3 style={{ fontSize: "1.5rem", marginBottom: "5px" }}>
-            {usbEvent.vendor} {usbEvent.model}
+            {usbEvent.vendor || "USB Storage"} {usbEvent.model || "Device"}
           </h3>
           <p style={{ color: "#647387", fontSize: "1.1rem" }}>
             {formatCapacity(usbEvent.capacity)}
@@ -153,3 +171,4 @@ export const USBScanModal: React.FC = () => {
     </div>
   );
 };
+

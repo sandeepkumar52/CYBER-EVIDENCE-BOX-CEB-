@@ -185,19 +185,29 @@ class USBDeviceManager:
         )
         conn = self.serial.get_connection(dev.device_path)
         status = conn.status if conn else "disconnected"
+        role = profile.role if profile else "generic"
+        product_name = dev.product or dev.description or "USB Serial Device"
 
         return {
             "vendorId": dev.vendor_id,
             "productId": dev.product_id,
+            "vid": dev.vendor_id,
+            "pid": dev.product_id,
             "manufacturer": dev.manufacturer,
-            "product": dev.product or dev.description,
+            "product": product_name,
+            "name": product_name,
             "serialNumber": dev.serial_number,
+            "serial_number": dev.serial_number,
             "devicePath": dev.device_path,
+            "port": dev.device_path,
+            "device_path": dev.device_path,
             "usbPath": dev.usb_path,
             "type": dev.type,
             "status": status,
             "isMock": dev.is_mock,
-            "matchedRole": profile.role if profile else None,
+            "is_mock": dev.is_mock,
+            "matchedRole": role,
+            "role": role,
             "roleName": profile.name if profile else None,
             "baudRate": conn.baud_rate if conn else (profile.baud_rate if profile else 115200),
             "lastData": conn.last_data if conn else None,
@@ -271,6 +281,7 @@ class USBDeviceManager:
         return {
             "mode": self.detector.mode,
             "scanActive": self._running,
+            "scanIntervalSeconds": self.scan_interval,
             "totalDevices": len(devices),
             "connectedCount": connected_count,
             "autoConnect": self.auto_connect,

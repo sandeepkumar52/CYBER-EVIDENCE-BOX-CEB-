@@ -104,44 +104,56 @@ export interface DashboardStats {
 // ==========================================
 // USB HARDWARE / SERIAL DEVICES
 // ==========================================
-export type USBDeviceRole = "esp32" | "gps" | "arduino" | "sensor" | "generic";
-export type USBConnectionStatus = "connected" | "disconnected" | "connecting" | "error";
+export type USBDeviceRole = "esp32" | "gps" | "arduino" | "sensor" | "generic" | string;
+export type USBConnectionStatus = "connected" | "disconnected" | "connecting" | "error" | string;
 
 export interface USBDevice {
-  port: string;
-  name: string;
-  role: USBDeviceRole;
+  port?: string;
+  devicePath?: string;
+  name?: string;
+  product?: string;
+  role?: USBDeviceRole;
+  matchedRole?: string | null;
+  roleName?: string | null;
   vid?: string | null;
   pid?: string | null;
+  vendorId?: string | null;
+  productId?: string | null;
   serialNumber?: string | null;
   manufacturer?: string | null;
   description?: string | null;
-  baudRate: number;
+  baudRate?: number;
   status: USBConnectionStatus;
-  isMock: boolean;
+  isMock?: boolean;
   lastSeen?: string;
+  lastCommunicationTime?: string | null;
+  lastData?: string | null;
   error?: string | null;
 }
 
 export interface HardwareSubsystemStatus {
-  mode: "hardware" | "mock" | "auto";
-  scanIntervalSeconds: number;
-  totalDevices: number;
-  connectedCount: number;
-  devices: USBDevice[];
+  mode?: "hardware" | "mock" | "auto" | "production" | string;
+  scanIntervalSeconds?: number;
+  scanActive?: boolean;
+  totalDevices?: number;
+  connectedCount?: number;
+  devices?: USBDevice[];
+  system?: string;
+  usb?: string;
 }
 
 export interface SerialDataPacket {
-  port: string;
+  port?: string;
+  devicePath?: string;
   data: string;
   role?: string;
-  timestamp: string;
+  timestamp?: string;
 }
 
 // ==========================================
 // USB STORAGE / PENDRIVE MANAGEMENT
 // ==========================================
-export type StorageStatus = "connected" | "mounted" | "unmounted" | "ejecting" | "ejected" | "error";
+export type StorageStatus = "connected" | "mounted" | "unmounted" | "ejecting" | "ejected" | "error" | string;
 
 export interface USBStorageDevice {
   device: string;
@@ -152,24 +164,27 @@ export interface USBStorageDevice {
   partition?: string | null;
   mountPoint?: string | null;
   filesystem?: string | null;
-  totalBytes: number;
-  usedBytes: number;
-  freeBytes: number;
-  mounted: boolean;
-  readOnly: boolean;
-  status: StorageStatus;
-  isMock: boolean;
+  totalBytes?: number;
+  usedBytes?: number;
+  freeBytes?: number;
+  mounted?: boolean;
+  readOnly?: boolean;
+  status?: StorageStatus;
+  isMock?: boolean;
   lastSeen?: string;
   error?: string | null;
 }
 
 export interface StorageSubsystemStatus {
-  totalStorageDevices: number;
-  mountedCount: number;
-  totalBytes: number;
-  usedBytes: number;
-  freeBytes: number;
-  devices: USBStorageDevice[];
+  totalStorageDevices?: number;
+  mountedCount?: number;
+  totalBytes?: number;
+  usedBytes?: number;
+  freeBytes?: number;
+  devices?: USBStorageDevice[];
+  autoExportEnabled?: boolean;
+  lastScanTime?: string;
+  status?: string;
 }
 
 export interface StorageFileItem {

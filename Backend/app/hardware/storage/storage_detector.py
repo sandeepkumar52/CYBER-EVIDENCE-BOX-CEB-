@@ -1,7 +1,9 @@
+import json
 import logging
 import os
 import platform
 import shutil
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,7 +21,7 @@ except ImportError:
 
 @dataclass
 class USBStorageDevice:
-    device: str  # e.g. /dev/sda1, E:, MOCK_SDA1
+    device: str  # e.g. /dev/sda1, /dev/sdb1, E:, MOCK_SDA1
     name: str  # e.g. "SanDisk Ultra 64GB"
     mount_point: Optional[str] = None
     filesystem: Optional[str] = None
@@ -32,6 +34,7 @@ class USBStorageDevice:
     model: Optional[str] = None
     serial_number: Optional[str] = None
     read_only: bool = False
+    removable: bool = True
     is_mock: bool = False
     error: Optional[str] = None
 
@@ -40,23 +43,31 @@ class USBStorageDevice:
             "name": self.name,
             "device": self.device,
             "mountPoint": self.mount_point,
+            "mount_point": self.mount_point,
             "filesystem": self.filesystem,
             "totalBytes": self.total_bytes,
+            "total_bytes": self.total_bytes,
             "usedBytes": self.used_bytes,
+            "used_bytes": self.used_bytes,
             "freeBytes": self.free_bytes,
+            "free_bytes": self.free_bytes,
             "mounted": self.mounted,
             "status": self.status,
             "vendor": self.vendor,
             "model": self.model,
             "serialNumber": self.serial_number,
+            "serial_number": self.serial_number,
             "readOnly": self.read_only,
+            "read_only": self.read_only,
+            "removable": self.removable,
             "isMock": self.is_mock,
+            "is_mock": self.is_mock,
             "error": self.error,
         }
 
 
 class USBStorageDetector:
-    def __init__(self, mode: str = "auto"):
+    def __init__(self, mode: str = HARDWARE_MODE):
         self.mode = mode.lower()
         self._mock_devices: Dict[str, USBStorageDevice] = {}
         self._init_default_mock_storage()
@@ -84,7 +95,6 @@ class USBStorageDetector:
             sample_pdf.write_bytes(b"%PDF-1.4 Mock CEB Forensic Report Header")
 
         dev_path = "/dev/sda1" if platform.system() != "Windows" else "MOCK_USB_E"
-        # Simulate ~64 GB total, ~12 GB used, ~52 GB free
         total_b = 64_000_000_000
         used_b = 12_400_000_000
         free_b = total_b - used_b
@@ -103,6 +113,7 @@ class USBStorageDetector:
             model="Ultra Fit 64GB",
             serial_number="4C530001090123112191",
             read_only=False,
+            removable=True,
             is_mock=True,
         )
 
@@ -113,68 +124,211 @@ class USBStorageDetector:
     def remove_mock_storage(self, device_path: str) -> None:
         self._mock_devices.pop(device_path, None)
 
+    def _scan_linux_lsblk(self) -> List[USBStorageDevice]:
+        """Query block devices on Linux/Raspberry Pi using lsblk JSON output."""
+        devices: List[USBStorageDevice] = []
+        try:
+            cmd = [
+                "lsblk",
+                "-J",
+                "-b",
+                "-o",
+                "NAME,KNAME,PATH,TYPE,SIZE,FSAVAIL,FSSIZE,FSTYPE,MOUNTPOINT,LABEL,MODEL,SERIAL,VENDOR,RO,RM,HOTPLUG,TRAN",
+            ]
+            res = subprocess.run(cmd, capture_output=True, text=True, timeout=4)
+            if res.returncode != 0 or not res.stdout.strip():
+                return []
+
+            data = json.loads(res.stdout)
+            block_devices = data.get("blockdevices", [])
+
+            for bd in block_devices:
+                is_usb_bus = str(bd.get("tran", "")).lower() == "usb"
+                is_removable = bool(bd.get("rm")) or bool(bd.get("hotplug"))
+                dev_path = bd.get("path") or f"/dev/{bd.get('name')}"
+
+                # Check if removable via sysfs if flag wasn't direct
+                if not is_removable and not is_usb_bus:
+                    disk_name = "".join([c for c in bd.get("kname", "") if not c.isdigit()])
+                    removable_file = Path(f"/sys/block/{disk_name}/removable")
+                    if removable_file.exists():
+                        try:
+                            if removable_file.read_text().strip() == "1":
+                                is_removable = True
+                        except Exception:
+                            pass
+
+                # If this block device is not removable or USB, ignore internal root drive (e.g. mmcblk0)
+                if not is_usb_bus and not is_removable:
+                    continue
+
+                vendor = (bd.get("vendor") or "").strip() or None
+                model = (bd.get("model") or "").strip() or None
+                serial = (bd.get("serial") or "").strip() or None
+                base_name = f"{vendor} {model}".strip() if vendor or model else f"USB Storage ({dev_path})"
+
+                children = bd.get("children", [])
+                if children:
+                    # Device has partitions (e.g., /dev/sda1, /dev/sda2)
+                    for child in children:
+                        c_path = child.get("path") or f"/dev/{child.get('name')}"
+                        c_mount = child.get("mountpoint")
+                        c_fstype = child.get("fstype")
+                        c_size = int(child.get("size") or 0)
+                        c_fssize = int(child.get("fssize") or 0)
+                        c_fsavail = int(child.get("fsavail") or 0)
+                        c_ro = bool(child.get("ro"))
+                        c_label = child.get("label")
+
+                        total_b = c_fssize or c_size
+                        free_b = c_fsavail
+                        used_b = max(0, total_b - free_b) if total_b and free_b is not None else 0
+
+                        # If mounted, query psutil for exact filesystem metrics
+                        if c_mount and HAS_PSUTIL and os.path.exists(c_mount):
+                            try:
+                                u = psutil.disk_usage(c_mount)
+                                total_b = u.total
+                                used_b = u.used
+                                free_b = u.free
+                            except Exception:
+                                pass
+
+                        part_name = f"{c_label} ({c_path})" if c_label else f"{base_name} ({c_path})"
+
+                        dev = USBStorageDevice(
+                            device=c_path,
+                            name=part_name,
+                            mount_point=c_mount,
+                            filesystem=c_fstype or "unknown",
+                            total_bytes=total_b,
+                            used_bytes=used_b,
+                            free_bytes=free_b,
+                            mounted=bool(c_mount),
+                            status="mounted" if c_mount else "connected",
+                            vendor=vendor,
+                            model=model,
+                            serial_number=serial,
+                            read_only=c_ro,
+                            removable=True,
+                            is_mock=False,
+                        )
+                        devices.append(dev)
+                else:
+                    # Unpartitioned raw drive (e.g. /dev/sda)
+                    mount_p = bd.get("mountpoint")
+                    fstype = bd.get("fstype")
+                    size_b = int(bd.get("size") or 0)
+                    fssize_b = int(bd.get("fssize") or 0)
+                    fsavail_b = int(bd.get("fsavail") or 0)
+                    ro = bool(bd.get("ro"))
+
+                    total_b = fssize_b or size_b
+                    free_b = fsavail_b
+                    used_b = max(0, total_b - free_b) if total_b and free_b is not None else 0
+
+                    if mount_p and HAS_PSUTIL and os.path.exists(mount_p):
+                        try:
+                            u = psutil.disk_usage(mount_p)
+                            total_b = u.total
+                            used_b = u.used
+                            free_b = u.free
+                        except Exception:
+                            pass
+
+                    dev = USBStorageDevice(
+                        device=dev_path,
+                        name=base_name,
+                        mount_point=mount_p,
+                        filesystem=fstype or "unknown",
+                        total_bytes=total_b,
+                        used_bytes=used_b,
+                        free_bytes=free_b,
+                        mounted=bool(mount_p),
+                        status="mounted" if mount_p else "connected",
+                        vendor=vendor,
+                        model=model,
+                        serial_number=serial,
+                        read_only=ro,
+                        removable=True,
+                        is_mock=False,
+                    )
+                    devices.append(dev)
+        except Exception as e:
+            logger.debug(f"[STORAGE] Note during lsblk scan: {e}")
+
+        return devices
+
     def scan_storage_devices(self) -> List[USBStorageDevice]:
         """
         Detects USB storage devices dynamically.
-        On Linux: checks /sys/block/sd*, /proc/mounts, psutil.
+        On Linux: checks lsblk, /sys/block, /proc/mounts, psutil.
         On Windows: checks removable drives.
         In mock/auto mode: includes mock devices when physical pendrives are absent.
         """
         physical_devices: List[USBStorageDevice] = []
 
-        if self.mode != "mock" and HAS_PSUTIL:
-            try:
-                partitions = psutil.disk_partitions(all=False)
-                for part in partitions:
-                    is_usb = False
-                    is_linux = platform.system() == "Linux"
+        if self.mode != "mock":
+            if platform.system() == "Linux":
+                physical_devices = self._scan_linux_lsblk()
 
-                    # Linux USB detection
-                    if is_linux:
-                        # Common mount locations for USB drives
-                        if any(part.mountpoint.startswith(p) for p in ["/media", "/mnt", "/run/media"]):
-                            is_usb = True
-                        elif part.device.startswith("/dev/sd") or part.device.startswith("/dev/nvme"):
-                            # Check if removable via sysfs
-                            base_block = part.device.replace("/dev/", "")
-                            base_disk = "".join([c for c in base_block if not c.isdigit()])
-                            removable_file = Path(f"/sys/block/{base_disk}/removable")
-                            if removable_file.exists() and removable_file.read_text().strip() == "1":
+            # Fallback or supplementary check via psutil
+            if not physical_devices and HAS_PSUTIL:
+                try:
+                    partitions = psutil.disk_partitions(all=True)
+                    for part in partitions:
+                        is_usb = False
+                        is_linux = platform.system() == "Linux"
+
+                        if is_linux:
+                            if any(part.mountpoint.startswith(p) for p in ["/media", "/mnt", "/run/media", "/var/lib/ceb/mounts"]):
                                 is_usb = True
+                            elif part.device.startswith("/dev/sd") or part.device.startswith("/dev/nvme"):
+                                base_block = part.device.replace("/dev/", "")
+                                base_disk = "".join([c for c in base_block if not c.isdigit()])
+                                removable_file = Path(f"/sys/block/{base_disk}/removable")
+                                if removable_file.exists():
+                                    try:
+                                        if removable_file.read_text().strip() == "1":
+                                            is_usb = True
+                                    except Exception:
+                                        pass
+                        elif platform.system() == "Windows":
+                            if "removable" in part.opts.lower() or "cdrom" not in part.opts.lower() and part.device not in ("C:\\", "c:\\"):
+                                if "fixed" not in part.opts.lower():
+                                    is_usb = True
 
-                    # Windows USB detection
-                    elif platform.system() == "Windows":
-                        if "removable" in part.opts.lower():
-                            is_usb = True
+                        if is_usb and part.device:
+                            total_b, used_b, free_b = 0, 0, 0
+                            if part.mountpoint and os.path.exists(part.mountpoint):
+                                try:
+                                    usage = psutil.disk_usage(part.mountpoint)
+                                    total_b = usage.total
+                                    used_b = usage.used
+                                    free_b = usage.free
+                                except Exception as e:
+                                    logger.debug(f"Could not read disk usage for {part.mountpoint}: {e}")
 
-                    if is_usb:
-                        # Get usage statistics safely
-                        total_b, used_b, free_b = 0, 0, 0
-                        try:
-                            usage = psutil.disk_usage(part.mountpoint)
-                            total_b = usage.total
-                            used_b = usage.used
-                            free_b = usage.free
-                        except Exception as e:
-                            logger.debug(f"Could not read disk usage for {part.mountpoint}: {e}")
-
-                        dev_name = f"USB Drive ({part.device})"
-                        dev = USBStorageDevice(
-                            device=part.device,
-                            name=dev_name,
-                            mount_point=part.mountpoint,
-                            filesystem=part.fstype or "unknown",
-                            total_bytes=total_b,
-                            used_bytes=used_b,
-                            free_bytes=free_b,
-                            mounted=bool(part.mountpoint),
-                            status="mounted" if part.mountpoint else "connected",
-                            read_only="ro" in part.opts.lower(),
-                            is_mock=False,
-                        )
-                        physical_devices.append(dev)
-            except Exception as e:
-                logger.error(f"Error scanning physical storage devices: {e}")
+                            dev_name = f"USB Drive ({part.device})"
+                            dev = USBStorageDevice(
+                                device=part.device,
+                                name=dev_name,
+                                mount_point=part.mountpoint or None,
+                                filesystem=part.fstype or "unknown",
+                                total_bytes=total_b,
+                                used_bytes=used_b,
+                                free_bytes=free_b,
+                                mounted=bool(part.mountpoint),
+                                status="mounted" if part.mountpoint else "connected",
+                                read_only="ro" in part.opts.lower(),
+                                removable=True,
+                                is_mock=False,
+                            )
+                            # Avoid duplicates
+                            if not any(d.device == dev.device for d in physical_devices):
+                                physical_devices.append(dev)
+                except Exception as e:
+                    logger.error(f"Error scanning physical storage devices: {e}")
 
         if self.mode == "production":
             return physical_devices
@@ -187,3 +341,4 @@ class USBStorageDetector:
             return physical_devices
         # Fallback to mock for seamless testing and local development
         return list(self._mock_devices.values())
+

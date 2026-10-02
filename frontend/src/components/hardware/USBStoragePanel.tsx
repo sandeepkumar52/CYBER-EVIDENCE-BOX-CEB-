@@ -34,19 +34,22 @@ export const USBStoragePanel: React.FC<Props> = ({
   const [ejectMessage, setEjectMessage] = useState<{ [device: string]: string }>({});
   const [isAddingMock, setIsAddingMock] = useState(false);
 
-  const formatGB = (bytes: number): string => {
-    if (!bytes || bytes <= 0) return "0 GB";
+  const deviceList = Array.isArray(devices) ? devices : [];
+
+  const formatGB = (bytes?: number): string => {
+    if (!bytes || bytes <= 0 || isNaN(bytes)) return "0 GB";
     const gb = bytes / (1000 * 1000 * 1000);
     return `${gb.toFixed(1)} GB`;
   };
 
-  const calculatePercent = (used: number, total: number): number => {
-    if (!total || total <= 0) return 0;
-    return Math.min(100, Math.round((used / total) * 100));
+  const calculatePercent = (used?: number, total?: number): number => {
+    if (!total || total <= 0 || isNaN(total) || !used || used <= 0 || isNaN(used)) return 0;
+    return Math.min(100, Math.max(0, Math.round((used / total) * 100)));
   };
 
   const handleEject = async (device: USBStorageDevice) => {
-    if (!window.confirm(`Are you sure you want to safely eject ${device.name} (${device.device})?`)) {
+    const devName = device.name || device.device;
+    if (!window.confirm(`Are you sure you want to safely eject ${devName} (${device.device})?`)) {
       return;
     }
     setEjectingDev(device.device);
@@ -70,7 +73,7 @@ export const USBStoragePanel: React.FC<Props> = ({
     setIsAddingMock(true);
     try {
       // Toggle a secondary mock pendrive /dev/sdb1
-      const hasMockSdb1 = devices.some((d) => d.device === "/dev/sdb1");
+      const hasMockSdb1 = deviceList.some((d) => d.device === "/dev/sdb1");
       if (hasMockSdb1) {
         await toggleMockStorageDevice("remove", "/dev/sdb1");
       } else {
@@ -98,7 +101,7 @@ export const USBStoragePanel: React.FC<Props> = ({
             disabled={isAddingMock}
             title="Simulate USB Storage insertion/removal"
           >
-            {devices.some((d) => d.device === "/dev/sdb1") ? (
+            {deviceList.some((d) => d.device === "/dev/sdb1") ? (
               <>
                 <MinusCircle size={15} /> Remove Mock USB
               </>
@@ -115,22 +118,25 @@ export const USBStoragePanel: React.FC<Props> = ({
       </div>
 
       <div className="storage-device-grid">
-        {devices.length === 0 ? (
+        {deviceList.length === 0 ? (
           <div className="empty-storage-state">
             <HardDrive size={40} style={{ opacity: 0.4, marginBottom: "12px" }} />
             <p>No USB storage devices or pendrives detected.</p>
-            <small>Insert a FAT32, exFAT, or ext4 USB drive into any Raspberry Pi USB port.</small>
+            <small>Insert a FAT32, exFAT, ext4, or NTFS USB drive into any Raspberry Pi USB port.</small>
           </div>
         ) : (
-          devices.map((dev) => {
-            const isMounted = dev.mounted;
+          deviceList.map((dev, idx) => {
+            const isMounted = Boolean(dev.mounted);
             const percent = calculatePercent(dev.usedBytes, dev.totalBytes);
             const isEjecting = ejectingDev === dev.device;
             const statusMsg = ejectMessage[dev.device];
+            const devKey = dev.device || `STORAGE_${idx}`;
+            const devName = dev.name || dev.model || "USB Flash Drive";
+            const devFs = (dev.filesystem || "UNKNOWN").toUpperCase();
 
             return (
               <div
-                key={dev.device}
+                key={devKey}
                 className={`storage-card ${isMounted ? "storage-mounted" : "storage-unmounted"}`}
               >
                 {/* CARD HEADER */}
@@ -139,7 +145,7 @@ export const USBStoragePanel: React.FC<Props> = ({
                     <HardDrive size={24} className="text-blue-400" />
                   </div>
                   <div className="device-titles">
-                    <h5>{dev.name}</h5>
+                    <h5>{devName}</h5>
                     <span className="device-port-code">{dev.device}</span>
                   </div>
                   <div className="flex-row items-center gap-1">
@@ -166,7 +172,7 @@ export const USBStoragePanel: React.FC<Props> = ({
                   </div>
                   <div className="meta-line">
                     <span className="meta-lbl">Filesystem:</span>
-                    <strong className="meta-val">{dev.filesystem?.toUpperCase() || "UNKNOWN"}</strong>
+                    <strong className="meta-val">{devFs}</strong>
                   </div>
                   <div className="meta-line">
                     <span className="meta-lbl">Access:</span>
@@ -243,3 +249,4 @@ export const USBStoragePanel: React.FC<Props> = ({
     </div>
   );
 };
+

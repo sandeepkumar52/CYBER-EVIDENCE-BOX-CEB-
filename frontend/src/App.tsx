@@ -23,6 +23,7 @@ import { UploadEvidenceModal } from "./components/UploadEvidenceModal";
 import { AddCustodyModal } from "./components/AddCustodyModal";
 import { LoginPage } from "./components/LoginPage";
 import { USBScanModal } from "./components/USBScanModal";
+import { ErrorBoundary } from "./components/ErrorBoundary";
 
 import { DashboardPage } from "./pages/DashboardPage";
 import { CasesPage } from "./pages/CasesPage";
@@ -53,14 +54,14 @@ const MainApp: React.FC = () => {
   useEffect(() => {
     api
       .get("/health")
-      .then((res) => setBackendStatus(res.data.status))
+      .then((res) => setBackendStatus(res.data?.status || "online"))
       .catch(() => setBackendStatus("Offline"));
   }, []);
 
   const loadAllCases = async () => {
     try {
       const response = await api.get<Case[]>("/cases?limit=100");
-      setCasesList(response.data);
+      setCasesList(Array.isArray(response.data) ? response.data : []);
     } catch {
       // Ignored if unauthenticated
     }
@@ -184,11 +185,13 @@ const MainApp: React.FC = () => {
         </nav>
 
         <div className="sidebar-footer">
-          <div className="operator-avatar">{user?.username.substring(0, 2).toUpperCase() || "SK"}</div>
+          <div className="operator-avatar">
+            {user?.username ? user.username.substring(0, 2).toUpperCase() : "SK"}
+          </div>
 
           <div className="operator-info">
-            <strong>{user?.username}</strong>
-            <span>{user?.role}</span>
+            <strong>{user?.username || "Investigator"}</strong>
+            <span>{user?.role || "User"}</span>
           </div>
 
           <button
@@ -218,7 +221,7 @@ const MainApp: React.FC = () => {
               {activePage === "case-details" && `Case: ${activeParam}`}
               {activePage === "evidence" && "Digital Evidence Registry"}
               {activePage === "custody" && "Chain of Custody"}
-              {activePage === "hardware" && "Hardware & USB Storage Management"}
+              {(activePage === "hardware" || activePage === "usb") && "Hardware & USB Storage Management"}
               {activePage === "audit-logs" && "System Audit Trail"}
               {activePage === "users" && "Investigator & User Accounts"}
             </h2>
@@ -226,55 +229,59 @@ const MainApp: React.FC = () => {
 
           <div className="topbar-actions">
             <div className="topbar-user">
-              <div className="operator-avatar">{user?.username.substring(0, 2).toUpperCase() || "SK"}</div>
+              <div className="operator-avatar">
+                {user?.username ? user.username.substring(0, 2).toUpperCase() : "SK"}
+              </div>
               <div>
-                <strong>{user?.username}</strong>
-                <small>{user?.role}</small>
+                <strong>{user?.username || "Investigator"}</strong>
+                <small>{user?.role || "User"}</small>
               </div>
             </div>
           </div>
         </header>
 
-        {/* PAGE ROUTING */}
-        {activePage === "dashboard" && (
-          <DashboardPage
-            onNavigate={navigateTo}
-            onOpenCreateCase={() => setIsCreateCaseOpen(true)}
-          />
-        )}
+        {/* PAGE ROUTING WITH ERROR BOUNDARIES */}
+        <ErrorBoundary fallbackTitle={`Error rendering ${activePage} module`}>
+          {activePage === "dashboard" && (
+            <DashboardPage
+              onNavigate={navigateTo}
+              onOpenCreateCase={() => setIsCreateCaseOpen(true)}
+            />
+          )}
 
-        {activePage === "cases" && (
-          <CasesPage
-            onNavigate={navigateTo}
-            onOpenCreateCase={() => setIsCreateCaseOpen(true)}
-          />
-        )}
+          {activePage === "cases" && (
+            <CasesPage
+              onNavigate={navigateTo}
+              onOpenCreateCase={() => setIsCreateCaseOpen(true)}
+            />
+          )}
 
-        {activePage === "case-details" && activeParam && (
-          <CaseDetailsPage
-            caseCode={activeParam}
-            onNavigate={navigateTo}
-            onOpenRegisterEvidence={handleOpenRegisterEvidence}
-            onOpenUploadModal={(ev) => setUploadEvidenceItem(ev)}
-          />
-        )}
+          {activePage === "case-details" && activeParam && (
+            <CaseDetailsPage
+              caseCode={activeParam}
+              onNavigate={navigateTo}
+              onOpenRegisterEvidence={handleOpenRegisterEvidence}
+              onOpenUploadModal={(ev) => setUploadEvidenceItem(ev)}
+            />
+          )}
 
-        {activePage === "evidence" && (
-          <EvidencePage
-            cases={casesList}
-            onOpenRegisterModal={() => handleOpenRegisterEvidence()}
-            onOpenUploadModal={(ev) => setUploadEvidenceItem(ev)}
-            onOpenCustodyModal={(ev) => setCustodyEvidenceItem(ev)}
-          />
-        )}
+          {activePage === "evidence" && (
+            <EvidencePage
+              cases={casesList}
+              onOpenRegisterModal={() => handleOpenRegisterEvidence()}
+              onOpenUploadModal={(ev) => setUploadEvidenceItem(ev)}
+              onOpenCustodyModal={(ev) => setCustodyEvidenceItem(ev)}
+            />
+          )}
 
-        {activePage === "custody" && <CustodyPage />}
+          {activePage === "custody" && <CustodyPage />}
 
-        {activePage === "hardware" && <HardwarePage />}
+          {(activePage === "hardware" || activePage === "usb") && <HardwarePage />}
 
-        {activePage === "audit-logs" && <AuditLogsPage />}
+          {activePage === "audit-logs" && <AuditLogsPage />}
 
-        {activePage === "users" && <UsersPage />}
+          {activePage === "users" && <UsersPage />}
+        </ErrorBoundary>
       </main>
 
       {/* MODAL DIALOGS */}
@@ -324,9 +331,11 @@ const MainApp: React.FC = () => {
 
 function App() {
   return (
-    <AuthProvider>
-      <MainApp />
-    </AuthProvider>
+    <ErrorBoundary fallbackTitle="Fatal application crash">
+      <AuthProvider>
+        <MainApp />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

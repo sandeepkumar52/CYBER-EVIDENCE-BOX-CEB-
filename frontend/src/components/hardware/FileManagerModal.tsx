@@ -129,10 +129,10 @@ export const FileManagerModal: React.FC<Props> = ({
   };
 
   const formatSize = (bytes: number): string => {
-    if (bytes === 0) return "0 B";
+    if (!bytes || bytes <= 0 || isNaN(bytes)) return "0 B";
     const k = 1024;
-    const sizes = ["B", "KB", "MB", "GB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const sizes = ["B", "KB", "MB", "GB", "TB"];
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
   };
 
@@ -148,7 +148,7 @@ export const FileManagerModal: React.FC<Props> = ({
             <div>
               <h3>USB FILE EXPLORER</h3>
               <span>
-                {device.name} · {device.device} · {device.filesystem?.toUpperCase()}
+                {device.name || device.model || "USB Flash Drive"} · {device.device} · {(device.filesystem || "UNKNOWN").toUpperCase()}
               </span>
             </div>
           </div>

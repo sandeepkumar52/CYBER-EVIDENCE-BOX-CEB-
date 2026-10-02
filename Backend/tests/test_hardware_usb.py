@@ -86,58 +86,65 @@ def test_hardware_health_endpoint():
 
 
 def test_usb_connect_write_read_disconnect_lifecycle():
-    login_res = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
-    token = login_res.json()["access_token"]
-    headers = {"Authorization": f"Bearer {token}"}
+    orig_mode = usb_manager.detector.mode
+    usb_manager.detector.mode = "mock"
+    usb_manager._known_devices.clear()
 
-    devices_res = client.get("/hardware/usb", headers=headers)
-    devices = devices_res.json()["devices"]
-    assert len(devices) > 0
-    target_path = devices[0]["devicePath"]
+    try:
+        login_res = client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+        token = login_res.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
 
-    # 1. Connect
-    conn_res = client.post(
-        "/hardware/usb/connect",
-        json={"devicePath": target_path, "baudRate": 115200},
-        headers=headers,
-    )
-    assert conn_res.status_code == 200
-    assert conn_res.json()["status"] == "connected"
+        devices_res = client.get("/hardware/usb", headers=headers)
+        devices = devices_res.json()["devices"]
+        assert len(devices) > 0
+        target_path = devices[0]["devicePath"]
 
-    # Duplicate connect should succeed idempotently
-    dup_res = client.post(
-        "/hardware/usb/connect",
-        json={"devicePath": target_path, "baudRate": 115200},
-        headers=headers,
-    )
-    assert dup_res.status_code == 200
+        # 1. Connect
+        conn_res = client.post(
+            "/hardware/usb/connect",
+            json={"devicePath": target_path, "baudRate": 115200},
+            headers=headers,
+        )
+        assert conn_res.status_code == 200
+        assert conn_res.json()["status"] == "connected"
 
-    # 2. Write command
-    write_res = client.post(
-        "/hardware/usb/write",
-        json={"devicePath": target_path, "data": "STATUS_CHECK\n"},
-        headers=headers,
-    )
-    assert write_res.status_code == 200
-    assert write_res.json()["status"] == "written"
+        # Duplicate connect should succeed idempotently
+        dup_res = client.post(
+            "/hardware/usb/connect",
+            json={"devicePath": target_path, "baudRate": 115200},
+            headers=headers,
+        )
+        assert dup_res.status_code == 200
 
-    # 3. Read buffer
-    read_res = client.get(
-        f"/hardware/usb/read?devicePath={target_path}&limit=10",
-        headers=headers,
-    )
-    assert read_res.status_code == 200
-    lines = read_res.json()["lines"]
-    assert len(lines) > 0
+        # 2. Write command
+        write_res = client.post(
+            "/hardware/usb/write",
+            json={"devicePath": target_path, "data": "STATUS_CHECK\n"},
+            headers=headers,
+        )
+        assert write_res.status_code == 200
+        assert write_res.json()["status"] == "written"
 
-    # 4. Disconnect
-    disc_res = client.post(
-        "/hardware/usb/disconnect",
-        json={"devicePath": target_path},
-        headers=headers,
-    )
-    assert disc_res.status_code == 200
-    assert disc_res.json()["status"] == "disconnected"
+        # 3. Read buffer
+        read_res = client.get(
+            f"/hardware/usb/read?devicePath={target_path}&limit=10",
+            headers=headers,
+        )
+        assert read_res.status_code == 200
+        lines = read_res.json()["lines"]
+        assert len(lines) > 0
+
+        # 4. Disconnect
+        disc_res = client.post(
+            "/hardware/usb/disconnect",
+            json={"devicePath": target_path},
+            headers=headers,
+        )
+        assert disc_res.status_code == 200
+        assert disc_res.json()["status"] == "disconnected"
+    finally:
+        usb_manager.detector.mode = orig_mode
 
 
 def test_invalid_device_path_rejection():

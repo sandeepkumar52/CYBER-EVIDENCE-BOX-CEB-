@@ -161,10 +161,26 @@ def root():
 
 
 @app.get("/health", tags=["System"])
+@app.get("/api/health", tags=["System"])
 def health_check():
+    db_ok = True
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+    except Exception as e:
+        logger.error(f"[DATABASE][ERROR] Health check failed: {e}")
+        db_ok = False
+
+    usb_info = usb_manager.get_health()
+    from datetime import datetime, timezone
     return {
-        "status": "healthy",
+        "status": "healthy" if db_ok else "degraded",
+        "service": "Cyber Evidence Box (CEB) Backend",
         "system": "Cyber Evidence Box",
+        "database": db_ok,
+        "usb_service": usb_info.get("system") == "healthy",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "hardware": usb_info,
     }
 
 

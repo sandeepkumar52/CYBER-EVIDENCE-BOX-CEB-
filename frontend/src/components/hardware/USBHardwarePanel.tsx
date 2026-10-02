@@ -32,15 +32,18 @@ export const USBHardwarePanel: React.FC<Props> = ({ devices, onRefresh }) => {
   const [loadingPort, setLoadingPort] = useState<string | null>(null);
   const logEndRef = useRef<HTMLDivElement | null>(null);
 
+  const deviceList = Array.isArray(devices) ? devices : [];
+
   // Listen for live serial data from WebSocket
   useEffect(() => {
     const unsub = hardwareWebSocket.on("usb:data", (packet: SerialDataPacket) => {
-      if (packet && packet.port && packet.data) {
+      const targetPort = packet?.port || packet?.devicePath;
+      if (targetPort && packet?.data) {
         setConsoleLogs((prev) => {
-          const existing = prev[packet.port] || [];
+          const existing = prev[targetPort] || [];
           return {
             ...prev,
-            [packet.port]: [...existing.slice(-150), packet.data],
+            [targetPort]: [...existing.slice(-150), packet.data],
           };
         });
       }
@@ -59,27 +62,32 @@ export const USBHardwarePanel: React.FC<Props> = ({ devices, onRefresh }) => {
   }, [consoleLogs, selectedPort]);
 
   const handleOpenConsole = async (port: string) => {
+    if (!port) return;
     setSelectedPort(port);
     try {
       const history = await readUSBSerialBuffer(port, 40);
-      if (history && history.lines) {
+      if (history && Array.isArray(history.lines)) {
         setConsoleLogs((prev) => ({
           ...prev,
           [port]: history.lines,
         }));
       }
-    } catch {
-      // Ignored
+    } catch (err) {
+      console.error(`[USB Console] Failed to read buffer for ${port}:`, err);
     }
   };
 
   const handleToggleConnect = async (device: USBDevice) => {
-    setLoadingPort(device.port);
+    const port = device.port || device.devicePath || "";
+    if (!port) return;
+
+    setLoadingPort(port);
     try {
-      if (device.status === "connected") {
-        await disconnectUSBSerialDevice(device.port);
+      const isConnected = (device.status || "").toLowerCase() === "connected";
+      if (isConnected) {
+        await disconnectUSBSerialDevice(port);
       } else {
-        await connectUSBSerialDevice(device.port, baudRate);
+        await connectUSBSerialDevice(port, baudRate);
       }
       onRefresh();
     } catch (err: any) {
@@ -105,8 +113,9 @@ export const USBHardwarePanel: React.FC<Props> = ({ devices, onRefresh }) => {
     }
   };
 
-  const getRoleIcon = (role: string) => {
-    switch (role) {
+  const getRoleIcon = (role?: string) => {
+    const r = (role || "").toLowerCase();
+    switch (r) {
       case "esp32":
         return <Cpu size={22} className="text-cyan-400" />;
       case "gps":
@@ -131,54 +140,61 @@ export const USBHardwarePanel: React.FC<Props> = ({ devices, onRefresh }) => {
       </div>
 
       <div className="hardware-device-grid">
-        {devices.length === 0 ? (
+        {deviceList.length === 0 ? (
           <div className="empty-hardware-state">
             <Radio size={40} style={{ opacity: 0.4, marginBottom: "12px" }} />
             <p>No USB serial hardware devices detected.</p>
             <small>Connect ESP32, GPS, or Arduino devices via USB to inspect.</small>
           </div>
         ) : (
-          devices.map((device) => {
-            const isConnected = device.status === "connected";
-            const isSelected = selectedPort === device.port;
+          deviceList.map((device, idx) => {
+            const port = device.port || device.devicePath || `USB_PORT_${idx}`;
+            const name = device.name || device.product || device.description || "USB Device";
+            const role = (device.role || device.matchedRole || "generic").toLowerCase();
+            const status = (device.status || "disconnected").toLowerCase();
+            const isConnected = status === "connected";
+            const isSelected = selectedPort === port;
+            const vid = device.vid || device.vendorId || "----";
+            const pid = device.pid || device.productId || "----";
+            const baud = device.baudRate || 115200;
 
             return (
               <div
-                key={device.port}
+                key={port}
                 className={`hardware-card ${isConnected ? "device-online" : "device-offline"} ${
                   isSelected ? "device-selected" : ""
                 }`}
               >
                 <div className="card-top">
-                  <div className="device-avatar">{getRoleIcon(device.role)}</div>
+                  <div className="device-avatar">{getRoleIcon(role)}</div>
                   <div className="device-titles">
-                    <h5>{device.name}</h5>
-                    <span className="device-port-code">{device.port}</span>
+                    <h5>{name}</h5>
+                    <span className="device-port-code">{port}</span>
                   </div>
-                  <span className={`status-pill ${device.status}`}>
+                  <span className={`status-pill ${status}`}>
                     {isConnected ? (
                       <CheckCircle2 size={13} style={{ marginRight: "4px" }} />
                     ) : (
                       <AlertCircle size={13} style={{ marginRight: "4px" }} />
                     )}
-                    {device.status.toUpperCase()}
+                    {status.toUpperCase()}
                   </span>
                 </div>
 
                 <div className="device-specs">
                   <div className="spec-row">
                     <span>Role</span>
-                    <strong>{device.role.toUpperCase()}</strong>
+                    <strong>{role.toUpperCase()}</strong>
                   </div>
                   <div className="spec-row">
                     <span>VID / PID</span>
                     <strong>
-                      {device.vid || "----"}:{device.pid || "----"}
+                      {vid}:{pid}
                     </strong>
                   </div>
                   <div className="spec-row">
                     <span>Baud Rate</span>
-                    <strong>{device.baudRate} bps</strong>
+                    <strong>{baud} bps</strong>
                   </div>
                   {device.isMock && (
                     <div className="spec-row">
@@ -192,10 +208,10 @@ export const USBHardwarePanel: React.FC<Props> = ({ devices, onRefresh }) => {
                   <button
                     className={`btn-touch ${isConnected ? "btn-danger" : "btn-primary"}`}
                     onClick={() => handleToggleConnect(device)}
-                    disabled={loadingPort === device.port}
+                    disabled={loadingPort === port}
                   >
                     <Power size={16} />
-                    {loadingPort === device.port
+                    {loadingPort === port
                       ? "Processing..."
                       : isConnected
                       ? "Disconnect"
@@ -204,7 +220,7 @@ export const USBHardwarePanel: React.FC<Props> = ({ devices, onRefresh }) => {
 
                   <button
                     className="btn-touch btn-secondary"
-                    onClick={() => handleOpenConsole(device.port)}
+                    onClick={() => handleOpenConsole(port)}
                   >
                     <Terminal size={16} />
                     Console
@@ -284,3 +300,4 @@ export const USBHardwarePanel: React.FC<Props> = ({ devices, onRefresh }) => {
     </div>
   );
 };
+

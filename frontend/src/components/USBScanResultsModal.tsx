@@ -25,12 +25,13 @@ interface Props {
 export const USBScanResultsModal: React.FC<Props> = ({ deviceInfo, files, onClose, onAcquire }) => {
   const [selectedFile, setSelectedFile] = useState<UsbFile | null>(null);
   const [caseId, setCaseId] = useState<string>("");
+  const fileList = Array.isArray(files) ? files : [];
   
-  const formatBytes = (bytes: number) => {
-    if (!bytes) return "-";
+  const formatBytes = (bytes?: number) => {
+    if (!bytes || bytes <= 0 || isNaN(bytes)) return "0 B";
     const k = 1024;
     const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
-    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1);
     return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + " " + sizes[i];
   };
 
@@ -40,25 +41,25 @@ export const USBScanResultsModal: React.FC<Props> = ({ deviceInfo, files, onClos
       alert("Please enter a Case ID to assign this evidence to.");
       return;
     }
-    // In a real implementation we would fetch available cases or have a dropdown
-    // For now we just pass the ID we want to associate it with (assuming 1 for dev)
     onAcquire(selectedFile, parseInt(caseId) || 1);
   };
+
+  const deviceTitle = deviceInfo?.vendor || deviceInfo?.model || deviceInfo?.device_id || "USB Device";
 
   return (
     <div className="modal-backdrop" style={{ zIndex: 9998 }}>
       <div className="modal-content" style={{ maxWidth: "900px", display: "flex", flexDirection: "column", height: "80vh" }}>
         <div className="modal-header">
-          <h2><Search size={18} /> USB File Discovery: {deviceInfo.vendor}</h2>
+          <h2><Search size={18} /> USB File Discovery: {deviceTitle}</h2>
           <button className="icon-button" onClick={onClose}><X size={18} /></button>
         </div>
 
         <div className="modal-body" style={{ display: "flex", flex: 1, overflow: "hidden", padding: 0 }}>
           {/* File Tree / List */}
           <div style={{ flex: 2, borderRight: "1px solid #e2e8f0", overflowY: "auto", padding: "15px" }}>
-            <h4 style={{ marginBottom: "15px", color: "#647387" }}>Discovered Files ({files.length})</h4>
+            <h4 style={{ marginBottom: "15px", color: "#647387" }}>Discovered Files ({fileList.length})</h4>
             <div style={{ display: "flex", flexDirection: "column", gap: "5px" }}>
-              {files.map((file, idx) => {
+              {fileList.map((file, idx) => {
                 const isMalware = file.malware_status !== "Clean";
                 return (
                   <div 

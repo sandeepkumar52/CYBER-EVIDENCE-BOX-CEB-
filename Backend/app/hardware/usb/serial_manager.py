@@ -291,10 +291,9 @@ class SerialManager:
         counter = 0
 
         while not conn.stop_event.is_set():
-            time.sleep(1.5)
-            counter += 1
-            if conn.stop_event.is_set():
+            if conn.stop_event.wait(timeout=0.5):
                 break
+            counter += 1
 
             role = (conn.role or "").lower()
             if "gps" in role or "gps" in conn.device_path.lower():

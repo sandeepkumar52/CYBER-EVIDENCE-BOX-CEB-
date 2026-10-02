@@ -1,0 +1,18 @@
+[Unit]
+Description=Cyber Evidence Box (CEB) Touchscreen Frontend Service
+After=network.target ceb-backend.service
+Wants=ceb-backend.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/CYBER-EVIDENCE-BOX-CEB--main/frontend
+Environment="PATH=/usr/local/bin:/usr/bin:/bin"
+ExecStart=/usr/bin/npm run preview -- --host 0.0.0.0 --port 5173
+Restart=always
+RestartSec=3
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

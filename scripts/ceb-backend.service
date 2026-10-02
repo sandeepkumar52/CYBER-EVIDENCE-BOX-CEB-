@@ -1,0 +1,24 @@
+[Unit]
+Description=Cyber Evidence Box (CEB) Forensic Backend Service
+After=network.target local-fs.target systemd-udevd.service
+Wants=systemd-udevd.service
+
+[Service]
+Type=simple
+User=pi
+Group=pi
+WorkingDirectory=/home/pi/CYBER-EVIDENCE-BOX-CEB--main/Backend
+Environment="PATH=/home/pi/CYBER-EVIDENCE-BOX-CEB--main/Backend/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin"
+Environment="HARDWARE_MODE=auto"
+Environment="STORAGE_MODE=auto"
+Environment="CEB_STORAGE_DIR=/home/pi/CYBER-EVIDENCE-BOX-CEB--main/storage"
+Environment="EVIDENCE_VAULT_DIR=/home/pi/CYBER-EVIDENCE-BOX-CEB--main/storage/vault"
+ExecStart=/home/pi/CYBER-EVIDENCE-BOX-CEB--main/Backend/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=3
+KillMode=process
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

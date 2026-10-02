@@ -1,10 +1,22 @@
 import axios from "axios";
 
+const getBaseUrl = (): string => {
+  if (import.meta.env.VITE_API_URL) {
+    return import.meta.env.VITE_API_URL;
+  }
+  if (typeof window !== "undefined" && window.location && window.location.hostname) {
+    const protocol = window.location.protocol === "https:" ? "https:" : "http:";
+    return `${protocol}//${window.location.hostname}:8000`;
+  }
+  return "http://127.0.0.1:8000";
+};
+
 const api = axios.create({
-  baseURL: "http://127.0.0.1:8000",
+  baseURL: getBaseUrl(),
   headers: {
     "Content-Type": "application/json",
   },
+  timeout: 15000,
 });
 
 api.interceptors.request.use(
